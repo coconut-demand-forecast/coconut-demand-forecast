@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, Area } from 'recharts';
 import AppLayout from '../components/AppLayout';
 import { useLanguage } from '../context/LanguageContext';
-import { dashboardApi, mlApi, type ForecastPoint, type ModelMetrics } from '../api';
+import {
+  dataApi,
+  mlApi,
+  type DataQualitySummary,
+  type ForecastResponse,
+  type TestPredictionsResponse,
+} from '../api';
 
 const MODEL_OPTIONS = [
   { value: 'random_forest', name: 'Random Forest', desc: { th: 'Ensemble ต้นไม้ ทนต่อ outlier', en: 'Robust tree ensemble' } },
@@ -17,54 +24,70 @@ const HORIZON_OPTIONS = [
   { value: 180, key: 'h180' as const },
 ];
 
+type Stage = 'idle' | 'validate' | 'train' | 'forecast' | 'done';
+
 export default function Forecast() {
   const { t, lang } = useLanguage();
-  const [model, setModel] = useState('xgboost');
+  const [searchParams] = useSearchParams();
+  const preselectedModel = searchParams.get('model');
+
+  const [model, setModel] = useState(preselectedModel && MODEL_OPTIONS.some((m) => m.value === preselectedModel) ? preselectedModel : 'xgboost');
   const [horizon, setHorizon] = useState(30);
-  const [training, setTraining] = useState(false);
-  const [metrics, setMetrics] = useState<ModelMetrics | null>(null);
-  const [forecastPoints, setForecastPoints] = useState<ForecastPoint[]>([]);
-  const [chartData, setChartData] = useState<any[]>([]);
+  const [stage, setStage] = useState<Stage>('idle');
+  const [forecastRes, setForecastRes] = useState<ForecastResponse | null>(null);
+  const [testRes, setTestRes] = useState<TestPredictionsResponse | null>(null);
+  const [futureChartData, setFutureChartData] = useState<any[]>([]);
+  const [testChartData, setTestChartData] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // Auto-run once if we arrived from Analytics with a model preselected.
   useEffect(() => {
-    dashboardApi
-      .demandSeries(60)
-      .then((series) => setChartData(series.map((p) => ({ date: p.date, actual: p.demand }))))
-      .catch(() => {});
+    if (preselectedModel) {
+      runPipeline();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const runTrainAndForecast = async () => {
-    setTraining(true);
+  const runPipeline = async () => {
     setError(null);
+    setForecastRes(null);
+    setTestRes(null);
     try {
-      const trainRes = await mlApi.train([model], horizon);
-      const m = trainRes.results.find((r) => r.model_type === model) ?? trainRes.results[0];
-      setMetrics(m);
+      setStage('validate');
+      const quality: DataQualitySummary = await dataApi.quality();
+      if (!quality.ready_for_training) {
+        setError(quality.reason || (lang === 'th' ? 'ข้อมูลไม่พร้อมสำหรับเทรนโมเดล' : 'Data not ready for training'));
+        setStage('idle');
+        return;
+      }
 
-      const fc = await mlApi.forecast(model, horizon);
-      setForecastPoints(fc.points);
+      setStage('train');
+      await mlApi.train([model], horizon);
 
-      const actualTail = await dashboardApi.demandSeries(60);
-      const combined = [
-        ...actualTail.map((p) => ({ date: p.date, actual: p.demand })),
-        ...fc.points.map((p) => ({ date: p.date, predicted: p.predicted, lower: p.lower, upper: p.upper })),
-      ];
-      setChartData(combined);
+      setStage('forecast');
+      const [fc, tp] = await Promise.all([mlApi.forecast(model, horizon), mlApi.testPredictions(model)]);
+      setForecastRes(fc);
+      setTestRes(tp);
+      setFutureChartData(fc.points.map((p) => ({ date: p.date, predicted: p.predicted, lower: p.lower, upper: p.upper })));
+      setTestChartData(tp.points.map((p) => ({ date: p.date, actual: p.actual, predicted: p.predicted })));
+
+      setStage('done');
     } catch (e: any) {
-      setError(e?.response?.data?.detail || (lang === 'th' ? 'เทรนโมเดลไม่สำเร็จ' : 'Training failed'));
-    } finally {
-      setTraining(false);
+      setError(e?.response?.data?.detail || (lang === 'th' ? 'เกิดข้อผิดพลาด' : 'Something went wrong'));
+      setStage('idle');
     }
   };
 
-  const stats = metrics
-    ? [
-        { label: 'MAE', value: metrics.mae.toFixed(1), color: 'var(--c-text)' },
-        { label: 'RMSE', value: metrics.rmse.toFixed(1), color: 'var(--c-text)' },
-        { label: 'R²', value: metrics.r2.toFixed(3), color: 'var(--c-primary-dark)' },
-      ]
-    : [];
+  const stageMessage = stage === 'validate' ? t('stageValidate') : stage === 'train' ? t('stageTrain') : stage === 'forecast' ? t('stageForecast') : null;
+  const busy = stage !== 'idle' && stage !== 'done';
+
+  const trendLabel = forecastRes
+    ? forecastRes.summary.trend === 'increasing'
+      ? t('trendUp')
+      : forecastRes.summary.trend === 'decreasing'
+      ? t('trendDown')
+      : t('trendFlat')
+    : '';
 
   return (
     <AppLayout title={t('navForecast')}>
@@ -79,13 +102,14 @@ export default function Forecast() {
                 <button
                   key={m.value}
                   onClick={() => setModel(m.value)}
+                  disabled={busy}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: 11,
                     border: `1px solid ${model === m.value ? 'var(--c-primary)' : 'var(--c-border)'}`,
                     background: model === m.value ? '#f2f8f5' : '#fff',
-                    cursor: 'pointer',
+                    cursor: busy ? 'default' : 'pointer',
                     textAlign: 'left',
                     padding: '11px 13px',
                     borderRadius: 11,
@@ -117,11 +141,12 @@ export default function Forecast() {
                 <button
                   key={h.value}
                   onClick={() => setHorizon(h.value)}
+                  disabled={busy}
                   style={{
                     border: `1px solid ${horizon === h.value ? 'var(--c-primary)' : 'var(--c-border)'}`,
                     background: horizon === h.value ? '#eaf5ef' : '#fff',
                     color: horizon === h.value ? 'var(--c-primary-dark)' : 'var(--c-text-muted)',
-                    cursor: 'pointer',
+                    cursor: busy ? 'default' : 'pointer',
                     fontWeight: 600,
                     fontSize: 13,
                     padding: '11px 0',
@@ -134,86 +159,164 @@ export default function Forecast() {
             </div>
           </div>
 
-          <button className="btn-primary" style={{ width: '100%', fontSize: 14, padding: 13 }} disabled={training} onClick={runTrainAndForecast}>
-            {training ? t('training') : t('trainModel')}
+          <button className="btn-primary" style={{ width: '100%', fontSize: 14, padding: 13 }} disabled={busy} onClick={runPipeline}>
+            {busy ? stageMessage : t('trainModel')}
           </button>
-          {error && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--c-danger)' }}>{error}</div>}
+          {busy && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ height: 6, borderRadius: 4, background: 'var(--c-border-light)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    height: '100%',
+                    background: 'var(--c-primary)',
+                    width: stage === 'validate' ? '20%' : stage === 'train' ? '65%' : '90%',
+                    transition: 'width .3s',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          {error && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--c-danger)', whiteSpace: 'pre-line' }}>{error}</div>}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
-          {stats.length > 0 && (
-            <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
-              {stats.map((s) => (
-                <div key={s.label} className="card" style={{ padding: '16px 18px' }}>
-                  <div style={{ fontSize: 12, color: 'var(--c-text-faint)', marginBottom: 8 }}>{s.label}</div>
-                  <div className="font-heading" style={{ fontWeight: 600, fontSize: 21, color: s.color }}>{s.value}</div>
+          {forecastRes && (
+            <>
+              <div className="card">
+                <div className="font-heading" style={{ fontWeight: 600, fontSize: 15, marginBottom: 14 }}>{t('resultsTitle')}</div>
+                <div className="grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 12 }}>
+                  <Stat label={t('lblModelUsed')} value={MODEL_OPTIONS.find((m) => m.value === forecastRes.model_type)?.name ?? forecastRes.model_type} />
+                  <Stat label={t('lblTrainSize')} value={forecastRes.train_size.toLocaleString()} />
+                  <Stat label={t('lblTestSize')} value={forecastRes.test_size.toLocaleString()} />
+                  <Stat label={t('lblHorizonUsed')} value={`${forecastRes.horizon_days} ${lang === 'th' ? 'วัน' : 'days'}`} />
+                  <Stat label="MAE" value={forecastRes.mae.toFixed(1)} />
+                  <Stat label="RMSE" value={forecastRes.rmse.toFixed(1)} />
+                  <Stat label="MAPE" value={`${forecastRes.mape.toFixed(1)}%`} />
+                  <Stat label="R²" value={forecastRes.r2.toFixed(3)} color="var(--c-primary-dark)" />
+                  <Stat label={t('lblForecastMean')} value={forecastRes.summary.mean.toLocaleString()} />
+                  <Stat label={t('lblForecastMax')} value={forecastRes.summary.max.toLocaleString()} />
+                  <Stat label={t('lblForecastMin')} value={forecastRes.summary.min.toLocaleString()} />
+                  <Stat
+                    label={t('lblTrend')}
+                    value={`${trendLabel} (${forecastRes.summary.trend_pct > 0 ? '+' : ''}${forecastRes.summary.trend_pct}%)`}
+                    color={forecastRes.summary.trend === 'increasing' ? 'var(--c-primary-dark)' : forecastRes.summary.trend === 'decreasing' ? 'var(--c-danger)' : undefined}
+                  />
                 </div>
-              ))}
-            </div>
+                <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', background: '#f4f9f6', borderRadius: 8, padding: '8px 12px' }}>{t('unTuned')}</div>
+              </div>
+
+              {/* Test-set backtest — clearly separate from the future forecast below */}
+              <div className="card">
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>{t('testChartTitle')}</div>
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', marginBottom: 10 }}>{t('testChartSub')}</div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <ComposedChart data={testChartData}>
+                    <CartesianGrid stroke="#eef4f0" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#a9bcb2' }} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10.5, fill: '#a9bcb2' }} width={40} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                    <Line type="monotone" dataKey="actual" stroke="#14664a" strokeWidth={2} dot={false} name={t('colActual')} />
+                    <Line type="monotone" dataKey="predicted" stroke="#e0983c" strokeWidth={2} dot={false} name={t('colPredicted')} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <details style={{ marginTop: 10 }}>
+                  <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--c-primary)', fontWeight: 600 }}>{t('testTableTitle')}</summary>
+                  <div style={{ overflowX: 'auto', maxHeight: 260, overflowY: 'auto', marginTop: 8 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 420 }}>
+                      <thead>
+                        <tr style={{ textAlign: 'left', color: 'var(--c-text-muted)', borderBottom: '2px solid var(--c-border-light)' }}>
+                          <th style={{ padding: '6px 10px' }}>{t('colDate')}</th>
+                          <th style={{ padding: '6px 10px' }}>{t('colActual')}</th>
+                          <th style={{ padding: '6px 10px' }}>{t('colPredicted')}</th>
+                          <th style={{ padding: '6px 10px' }}>{t('colError')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {testRes?.points.map((p) => (
+                          <tr key={p.date} style={{ borderBottom: '1px solid var(--c-border-light)' }}>
+                            <td style={{ padding: '6px 10px' }}>{p.date}</td>
+                            <td style={{ padding: '6px 10px' }}>{p.actual.toLocaleString()}</td>
+                            <td style={{ padding: '6px 10px' }}>{p.predicted.toLocaleString()}</td>
+                            <td style={{ padding: '6px 10px', color: p.error >= 0 ? 'var(--c-danger)' : 'var(--c-primary-dark)' }}>{p.error}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              </div>
+
+              {/* Future forecast — no actual values exist for this period */}
+              <div className="card">
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>{t('futureChartTitle')}</div>
+                  <a
+                    href={mlApi.forecastExportUrl(forecastRes.model_type, forecastRes.horizon_days)}
+                    style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-primary)', textDecoration: 'none' }}
+                  >
+                    {t('exportForecastBtn')}
+                  </a>
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', marginBottom: 10 }}>{t('futureChartSub')}</div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <ComposedChart data={futureChartData}>
+                    <CartesianGrid stroke="#eef4f0" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#a9bcb2' }} minTickGap={30} />
+                    <YAxis tick={{ fontSize: 10.5, fill: '#a9bcb2' }} width={40} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                    <Area type="monotone" dataKey="upper" stroke="none" fill="#2fa76d" fillOpacity={0.12} />
+                    <Area type="monotone" dataKey="lower" stroke="none" fill="#fff" fillOpacity={1} />
+                    <Line type="monotone" dataKey="predicted" stroke="#2fa76d" strokeWidth={2.4} dot={false} name={t('colPredicted')} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginTop: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--c-text-muted)', borderBottom: '2px solid var(--c-border-light)' }}>
+                      <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t('colDate')}</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t('colDemandF')}</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t('colLower')}</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 600 }}>{t('colUpper')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecastRes.points.slice(0, 10).map((p) => (
+                      <tr key={p.date} style={{ borderBottom: '1px solid var(--c-border-light)' }}>
+                        <td style={{ padding: '8px 10px' }}>{p.date}</td>
+                        <td style={{ padding: '8px 10px', color: 'var(--c-primary)', fontWeight: 600 }}>{p.predicted.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px', color: 'var(--c-text-faint)' }}>{p.lower.toLocaleString()}</td>
+                        <td style={{ padding: '8px 10px', color: 'var(--c-text-faint)' }}>{p.upper.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div style={{ marginTop: 14, fontSize: 12, color: 'var(--c-text-muted)', lineHeight: 1.7, background: '#f4f9f6', borderRadius: 10, padding: '12px 14px' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--c-text-soft)' }}>{t('assumptionsTitle')}</div>
+                  {forecastRes.assumptions}
+                </div>
+              </div>
+            </>
           )}
 
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>{t('resultChart')}</div>
-              <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--c-text-muted)' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--c-primary-dark)' }} />
-                  {t('actual')}
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--c-primary-light)' }} />
-                  {t('forecast')}
-                </span>
-              </div>
+          {!forecastRes && !busy && (
+            <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--c-text-faint)', fontSize: 13 }}>
+              {lang === 'th' ? 'กดเทรนโมเดลเพื่อดูผลพยากรณ์' : 'Click "Train Model" to see results'}
             </div>
-            <ResponsiveContainer width="100%" height={260}>
-              <ComposedChart data={chartData}>
-                <CartesianGrid stroke="#eef4f0" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 9.5, fill: '#a9bcb2' }} minTickGap={30} />
-                <YAxis tick={{ fontSize: 10.5, fill: '#a9bcb2' }} width={40} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                <Area type="monotone" dataKey="upper" stroke="none" fill="#2fa76d" fillOpacity={0.12} />
-                <Area type="monotone" dataKey="lower" stroke="none" fill="#fff" fillOpacity={1} />
-                <Line type="monotone" dataKey="actual" stroke="#14664a" strokeWidth={2.4} dot={false} connectNulls={false} />
-                <Line type="monotone" dataKey="predicted" stroke="#2fa76d" strokeWidth={2.4} strokeDasharray="6 5" dot={false} connectNulls={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="card">
-            <div className="font-heading" style={{ fontWeight: 600, fontSize: 15, marginBottom: 12 }}>{t('fcTableTitle')}</div>
-            <div style={{ overflowX: 'auto', maxHeight: 320, overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 420 }}>
-                <thead>
-                  <tr style={{ textAlign: 'left', color: 'var(--c-text-muted)', borderBottom: '2px solid var(--c-border-light)' }}>
-                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t('colDate')}</th>
-                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t('colDemandF')}</th>
-                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t('colLower')}</th>
-                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>{t('colUpper')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {forecastPoints.map((p) => (
-                    <tr key={p.date} style={{ borderBottom: '1px solid var(--c-border-light)', color: 'var(--c-text-soft)' }}>
-                      <td style={{ padding: '8px 12px', fontWeight: 500 }}>{p.date}</td>
-                      <td style={{ padding: '8px 12px', color: 'var(--c-primary)', fontWeight: 600 }}>{p.predicted.toLocaleString()}</td>
-                      <td style={{ padding: '8px 12px', color: 'var(--c-text-faint)' }}>{p.lower.toLocaleString()}</td>
-                      <td style={{ padding: '8px 12px', color: 'var(--c-text-faint)' }}>{p.upper.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {forecastPoints.length === 0 && (
-                    <tr>
-                      <td colSpan={4} style={{ padding: '20px 12px', textAlign: 'center', color: 'var(--c-text-faint)' }}>
-                        {lang === 'th' ? 'กดเทรนโมเดลเพื่อดูผลพยากรณ์' : 'Click "Train Model" to see results'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </AppLayout>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div style={{ background: '#f7fbf9', borderRadius: 10, padding: '10px 12px' }}>
+      <div style={{ fontSize: 10.5, color: 'var(--c-text-faint)', marginBottom: 3 }}>{label}</div>
+      <div className="font-heading" style={{ fontSize: 15, fontWeight: 600, color: color ?? 'var(--c-text-soft)' }}>{value}</div>
+    </div>
   );
 }

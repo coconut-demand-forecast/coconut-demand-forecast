@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import AppLayout from '../components/AppLayout';
 import { useLanguage } from '../context/LanguageContext';
-import { dataApi, type DemandRecord } from '../api';
+import { dataApi, type DataQualitySummary, type DemandRecord, type UploadResult } from '../api';
 
 export default function DataPage() {
   const { t, lang } = useLanguage();
-  const [summary, setSummary] = useState<{ count: number; date_from: string | null; date_to: string | null } | null>(null);
+  const [quality, setQuality] = useState<DataQualitySummary | null>(null);
   const [records, setRecords] = useState<DemandRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingReport, setPendingReport] = useState<UploadResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
-    const [s, r] = await Promise.all([dataApi.summary(), dataApi.records(8)]);
-    setSummary(s);
+    const [q, r] = await Promise.all([dataApi.quality(), dataApi.records(8)]);
+    setQuality(q);
     setRecords(r);
   }, []);
 
@@ -22,13 +24,44 @@ export default function DataPage() {
     refresh();
   }, [refresh]);
 
+  const closeConfirm = () => {
+    setPendingFile(null);
+    setPendingReport(null);
+  };
+
   const handleFile = async (file: File) => {
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const res = await dataApi.upload(file);
-      setMessage(`${lang === 'th' ? 'นำเข้าสำเร็จ' : 'Imported'}: ${res.rows_imported} ${t('unitRecords')}`);
+      const report = await dataApi.upload(file, true);
+      if (report.existing_rows_to_replace > 0) {
+        setPendingFile(file);
+        setPendingReport(report);
+      } else {
+        const res = await dataApi.upload(file, false);
+        setMessage(
+          `${lang === 'th' ? 'นำเข้าสำเร็จ' : 'Imported'}: ${res.rows_imported}/${res.rows_total} ${t('unitRecords')}`
+        );
+        await refresh();
+      }
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || (lang === 'th' ? 'อัปโหลดไม่สำเร็จ' : 'Upload failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmReplace = async () => {
+    if (!pendingFile) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await dataApi.upload(pendingFile, false);
+      setMessage(
+        `${lang === 'th' ? 'นำเข้าสำเร็จ' : 'Imported'}: ${res.rows_imported}/${res.rows_total} ${t('unitRecords')}`
+      );
+      closeConfirm();
       await refresh();
     } catch (e: any) {
       setError(e?.response?.data?.detail || (lang === 'th' ? 'อัปโหลดไม่สำเร็จ' : 'Upload failed'));
@@ -70,22 +103,21 @@ export default function DataPage() {
     if (file) handleFile(file);
   };
 
-  const checks = summary
+  const qualityRows = quality
     ? [
+        { label: t('qualityCount'), value: `${quality.count.toLocaleString()} ${t('unitRecords')}`, warn: false },
         {
-          ok: summary.count > 0,
-          title: lang === 'th' ? 'จำนวนข้อมูล' : 'Record count',
-          detail: `${summary.count.toLocaleString()} ${t('unitRecords')}`,
+          label: t('qualityDateRange'),
+          value: quality.date_from && quality.date_to ? `${quality.date_from} - ${quality.date_to}` : '-',
+          warn: false,
         },
+        { label: t('qualityMissing'), value: `${quality.missing_value_rows.toLocaleString()}`, warn: quality.missing_value_rows > 0 },
+        { label: t('qualityDuplicate'), value: `${quality.duplicate_date_rows.toLocaleString()}`, warn: quality.duplicate_date_rows > 0 },
+        { label: t('qualityOutlier'), value: `${quality.outlier_rows.toLocaleString()}`, warn: quality.outlier_rows > 0 },
         {
-          ok: summary.count >= 70,
-          title: lang === 'th' ? 'ปริมาณข้อมูลเพียงพอสำหรับเทรนโมเดล' : 'Enough data to train',
-          detail: summary.count >= 70 ? (lang === 'th' ? 'เพียงพอ' : 'Sufficient') : lang === 'th' ? 'ควรมีอย่างน้อย 70 วัน' : 'Need at least ~70 days',
-        },
-        {
-          ok: !!summary.date_from && !!summary.date_to,
-          title: lang === 'th' ? 'ช่วงวันที่ข้อมูล' : 'Date range',
-          detail: summary.date_from && summary.date_to ? `${summary.date_from} - ${summary.date_to}` : '-',
+          label: t('qualityUsable'),
+          value: `${quality.usable_rows_for_training.toLocaleString()} / ${lang === 'th' ? 'ต้องการอย่างน้อย' : 'need'} ${quality.min_raw_rows_required}`,
+          warn: !quality.ready_for_training,
         },
       ]
     : [];
@@ -123,7 +155,7 @@ export default function DataPage() {
                 }}
               />
               <button className="btn-primary" style={{ fontSize: 13.5, padding: '11px 22px' }} disabled={busy} onClick={() => fileInputRef.current?.click()}>
-                {t('chooseFile')}
+                {busy && !pendingFile ? t('checkingFile') : t('chooseFile')}
               </button>
               <button
                 className="btn-primary"
@@ -136,24 +168,43 @@ export default function DataPage() {
             </div>
           </div>
           {message && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--c-primary-dark)' }}>{message}</div>}
-          {error && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--c-danger)' }}>{error}</div>}
+          {error && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--c-danger)', whiteSpace: 'pre-line' }}>{error}</div>}
         </div>
 
         <div className="card" style={{ padding: 22 }}>
-          <div className="font-heading" style={{ fontWeight: 600, fontSize: 15, marginBottom: 14 }}>{t('validateTitle')}</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>{t('qualityTitle')}</div>
+            {quality && quality.count > 0 && (
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '3px 10px',
+                  borderRadius: 20,
+                  background: quality.ready_for_training ? '#eaf5ef' : '#fdf3e6',
+                  color: quality.ready_for_training ? 'var(--c-primary-dark)' : 'var(--c-warn)',
+                }}
+              >
+                {quality.ready_for_training ? t('qualityReady') : t('qualityNotReady')}
+              </span>
+            )}
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {checks.map((c) => (
-              <div key={c.title} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 13px', borderRadius: 11, background: c.ok ? '#f2f8f5' : '#fdf3e6' }}>
-                <span style={{ width: 22, height: 22, flex: 'none', borderRadius: 7, background: c.ok ? '#dcefe4' : '#f9e3c3', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
-                  {c.ok ? '✓' : '!'}
+            {qualityRows.map((c) => (
+              <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 13px', borderRadius: 11, background: c.warn ? '#fdf3e6' : '#f2f8f5' }}>
+                <span style={{ width: 22, height: 22, flex: 'none', borderRadius: 7, background: c.warn ? '#f9e3c3' : '#dcefe4', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                  {c.warn ? '!' : '✓'}
                 </span>
                 <span style={{ flex: 1 }}>
-                  <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: 'var(--c-text-soft)' }}>{c.title}</span>
-                  <span style={{ display: 'block', fontSize: 11, color: 'var(--c-text-muted)' }}>{c.detail}</span>
+                  <span style={{ display: 'block', fontSize: 12, color: 'var(--c-text-muted)' }}>{c.label}</span>
+                  <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--c-text-soft)' }}>{c.value}</span>
                 </span>
               </div>
             ))}
-            {!summary?.count && <div style={{ fontSize: 12.5, color: 'var(--c-text-faint)' }}>{t('noData')}</div>}
+            {quality?.reason && (
+              <div style={{ fontSize: 11.5, color: 'var(--c-warn)', lineHeight: 1.6 }}>{quality.reason}</div>
+            )}
+            {!quality?.count && <div style={{ fontSize: 12.5, color: 'var(--c-text-faint)' }}>{t('noData')}</div>}
           </div>
         </div>
       </div>
@@ -161,7 +212,7 @@ export default function DataPage() {
       <div className="card" style={{ padding: '20px 22px', marginBottom: 15 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
           <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>{t('dataPreview')}</div>
-          <span style={{ fontSize: 12, color: 'var(--c-text-faint)' }}>{summary?.count ?? 0} {t('unitRecords')}</span>
+          <span style={{ fontSize: 12, color: 'var(--c-text-faint)' }}>{quality?.count ?? 0} {t('unitRecords')}</span>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 500 }}>
@@ -208,13 +259,71 @@ export default function DataPage() {
           </a>
           <button
             onClick={handleClear}
-            disabled={busy || !summary?.count}
+            disabled={busy || !quality?.count}
             style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid rgba(255,255,255,.4)', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 600, fontSize: 13.5, padding: '11px 18px', borderRadius: 10 }}
           >
             {t('clearData')}
           </button>
         </div>
       </div>
+
+      {pendingFile && pendingReport && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(23,37,30,.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div className="card" style={{ maxWidth: 460, width: '100%', padding: 26 }}>
+            <div className="font-heading" style={{ fontWeight: 600, fontSize: 17, marginBottom: 10 }}>{t('confirmReplaceTitle')}</div>
+            <p style={{ fontSize: 13, color: 'var(--c-text-muted)', lineHeight: 1.7, marginBottom: 16 }}>
+              {t('confirmReplaceBody').replace('{n}', pendingReport.existing_rows_to_replace.toLocaleString())}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, marginBottom: 16, background: '#f4f9f6', borderRadius: 10, padding: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--c-text-muted)' }}>{t('rowsTotal')}</span>
+                <span style={{ fontWeight: 600 }}>{pendingReport.rows_total}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--c-text-muted)' }}>{t('rowsImported')}</span>
+                <span style={{ fontWeight: 600, color: 'var(--c-primary-dark)' }}>{pendingReport.rows_imported}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--c-text-muted)' }}>{t('rowsSkippedLabel')}</span>
+                <span style={{ fontWeight: 600 }}>{pendingReport.rows_skipped}</span>
+              </div>
+            </div>
+            {pendingReport.warnings.length > 0 && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-warn)', marginBottom: 6 }}>{t('warningsTitle')}</div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--c-text-muted)', lineHeight: 1.7 }}>
+                  {pendingReport.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={closeConfirm}
+                disabled={busy}
+                style={{ border: '1px solid var(--c-border)', background: '#fff', color: 'var(--c-text-muted)', fontWeight: 600, fontSize: 13, padding: '10px 18px', borderRadius: 10, cursor: 'pointer' }}
+              >
+                {t('cancelBtn')}
+              </button>
+              <button className="btn-primary" style={{ fontSize: 13, padding: '10px 18px' }} disabled={busy} onClick={confirmReplace}>
+                {t('confirmImportBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 }

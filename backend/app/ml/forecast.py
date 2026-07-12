@@ -3,6 +3,16 @@ import pandas as pd
 
 Z_80 = 1.28
 
+ASSUMPTIONS_TEXT = (
+    "การพยากรณ์นี้ใช้วิธี Recursive Forecast: พยากรณ์ทีละวันตามลำดับเวลา "
+    "แล้วนำค่าความต้องการที่พยากรณ์ได้ของแต่ละวันไปใช้เป็นค่า Lag (ย้อนหลัง 1/7/30 วัน) "
+    "และค่าเฉลี่ยเคลื่อนที่ (Rolling Mean 7/30 วัน) สำหรับพยากรณ์วันถัดไป โดยไม่มีการใช้ข้อมูลจริงในอนาคตเลย "
+    "ส่วนตัวแปรภายนอกที่ไม่ทราบค่าล่วงหน้า (ราคาขาย ราคาต้นทุน ปริมาณผลผลิต อุณหภูมิ ปริมาณน้ำฝน จำนวนนักท่องเที่ยว) "
+    "ใช้ค่าเฉลี่ยของเดือนเดียวกันจากข้อมูลย้อนหลังทั้งหมด (Monthly Seasonal Average) เป็นค่าประมาณ "
+    "ส่วนช่องทางจำหน่ายและสถานะโปรโมชั่นใช้ค่าล่าสุดที่มีข้อมูลจริงต่อเนื่องไปจนจบช่วงพยากรณ์ "
+    "และวันหยุด/เทศกาลในอนาคตถือว่าเป็นวันปกติ (ยังไม่รองรับปฏิทินวันหยุดล่วงหน้า)"
+)
+
 
 def generate_forecast(
     records_df: pd.DataFrame,
@@ -11,6 +21,27 @@ def generate_forecast(
     horizon_days: int,
     residual_std: float,
 ) -> list[dict]:
+    """Recursive multi-step-ahead forecast.
+
+    Real future values for demand and for exogenous variables (price,
+    weather, tourist counts, ...) do not exist yet, so each step is built
+    entirely from information available at "now":
+
+    1. Demand lag/rolling features for day t+1 come from the ALREADY
+       PREDICTED values for days up to t (recursion) — for t+1 itself
+       these fall back to real historical actuals, same as at deployment
+       time.
+    2. Exogenous features for day t+1 are estimated from the historical
+       monthly average for that calendar month (season-aware, since
+       coconut demand/price move with the season) — never from real
+       future data, which would not exist in a genuine forecast.
+    3. Channel and promotion status carry forward the last known real
+       value; holidays/festivals default to "not a holiday" since no
+       forward calendar is modeled.
+
+    See ASSUMPTIONS_TEXT above for the exact user-facing description of
+    this method, returned alongside every forecast response.
+    """
     history = records_df.sort_values("date").reset_index(drop=True).copy()
     history["date"] = pd.to_datetime(history["date"])
     history["is_holiday"] = history["is_holiday"].fillna(False).astype(int)

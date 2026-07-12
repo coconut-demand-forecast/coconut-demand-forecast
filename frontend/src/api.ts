@@ -28,11 +28,18 @@ export interface TokenResponse {
 
 export interface DashboardSummary {
   total_records: number;
+  usable_rows_for_training: number;
+  min_usable_rows_required: number;
   avg_demand_30d: number | null;
   avg_price_30d: number | null;
   growth_pct: number | null;
   best_model: string | null;
+  best_mape: number | null;
   best_r2: number | null;
+  train_size: number | null;
+  test_size: number | null;
+  last_trained_at: string | null;
+  last_forecast_horizon_days: number | null;
 }
 
 export interface DemandSeriesPoint {
@@ -53,17 +60,22 @@ export interface SeasonalPoint {
 
 export interface ModelMetrics {
   model_type: string;
+  train_size: number | null;
+  test_size: number | null;
   mae: number;
   rmse: number;
   mape: number;
   r2: number;
   feature_importance: Record<string, number>;
+  parameters: Record<string, number> | null;
+  hyperparameters_tuned: boolean;
   trained_at: string;
 }
 
 export interface TrainResponse {
   results: ModelMetrics[];
   best_model: string;
+  best_model_reason: string;
 }
 
 export interface ForecastPoint {
@@ -73,10 +85,68 @@ export interface ForecastPoint {
   upper: number;
 }
 
+export interface ForecastSummary {
+  mean: number;
+  max: number;
+  min: number;
+  trend: 'increasing' | 'decreasing' | 'flat';
+  trend_pct: number;
+}
+
 export interface ForecastResponse {
   model_type: string;
   horizon_days: number;
   points: ForecastPoint[];
+  assumptions: string;
+  summary: ForecastSummary;
+  train_size: number;
+  test_size: number;
+  mae: number;
+  rmse: number;
+  mape: number;
+  r2: number;
+  trained_at: string;
+}
+
+export interface TestPredictionPoint {
+  date: string;
+  actual: number;
+  predicted: number;
+  error: number;
+}
+
+export interface TestPredictionsResponse {
+  model_type: string;
+  train_size: number;
+  test_size: number;
+  points: TestPredictionPoint[];
+}
+
+export interface DataQualitySummary {
+  count: number;
+  date_from: string | null;
+  date_to: string | null;
+  missing_value_rows: number;
+  duplicate_date_rows: number;
+  outlier_rows: number;
+  usable_rows_for_training: number;
+  min_raw_rows_required: number;
+  ready_for_training: boolean;
+  reason: string | null;
+}
+
+export interface UploadResult {
+  dry_run: boolean;
+  rows_total: number;
+  rows_imported: number;
+  rows_skipped: number;
+  missing_value_rows: number;
+  invalid_date_rows: number;
+  invalid_demand_rows: number;
+  negative_demand_rows: number;
+  duplicate_date_rows: number;
+  existing_rows_to_replace: number;
+  warnings: string[];
 }
 
 export interface DemandRecord {
@@ -101,15 +171,19 @@ export const authApi = {
 };
 
 export const dataApi = {
-  upload: (file: File) => {
+  upload: (file: File, dryRun: boolean) => {
     const form = new FormData();
     form.append('file', file);
     return api
-      .post('/api/data/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .post<UploadResult>('/api/data/upload', form, {
+        params: { dry_run: dryRun },
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
       .then((r) => r.data);
   },
-  loadSample: () => api.post('/api/data/load-sample').then((r) => r.data),
+  loadSample: () => api.post<UploadResult>('/api/data/load-sample').then((r) => r.data),
   summary: () => api.get('/api/data/summary').then((r) => r.data),
+  quality: () => api.get<DataQualitySummary>('/api/data/quality').then((r) => r.data),
   records: (limit = 20) =>
     api.get<DemandRecord[]>('/api/data/records', { params: { limit } }).then((r) => r.data),
   clear: () => api.delete('/api/data/records').then((r) => r.data),
@@ -126,6 +200,13 @@ export const mlApi = {
     api
       .get<ForecastResponse>('/api/ml/forecast', { params: { model, horizon_days: horizonDays } })
       .then((r) => r.data),
+  testPredictions: (model: string) =>
+    api
+      .get<TestPredictionsResponse>('/api/ml/test-predictions', { params: { model } })
+      .then((r) => r.data),
+  forecastExportUrl: (model: string, horizonDays: number) =>
+    `${API_URL}/api/ml/forecast/export?model=${model}&horizon_days=${horizonDays}`,
+  compareExportUrl: () => `${API_URL}/api/ml/compare/export`,
 };
 
 export const dashboardApi = {

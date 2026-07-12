@@ -56,8 +56,16 @@ class DemandRecordOut(DemandRecordIn):
 
 
 class UploadResult(BaseModel):
+    dry_run: bool
+    rows_total: int
     rows_imported: int
     rows_skipped: int
+    missing_value_rows: int = 0
+    invalid_date_rows: int = 0
+    invalid_demand_rows: int = 0
+    negative_demand_rows: int = 0
+    duplicate_date_rows: int = 0
+    existing_rows_to_replace: int = 0
     warnings: List[str] = []
 
 
@@ -72,11 +80,15 @@ class TrainRequest(BaseModel):
 
 class ModelMetrics(BaseModel):
     model_type: str
+    train_size: Optional[int] = None
+    test_size: Optional[int] = None
     mae: float
     rmse: float
     mape: float
     r2: float
     feature_importance: dict
+    parameters: Optional[dict] = None
+    hyperparameters_tuned: bool = False
     trained_at: dt.datetime
 
     class Config:
@@ -86,6 +98,7 @@ class ModelMetrics(BaseModel):
 class TrainResponse(BaseModel):
     results: List[ModelMetrics]
     best_model: str
+    best_model_reason: str
 
 
 class ForecastPoint(BaseModel):
@@ -95,7 +108,51 @@ class ForecastPoint(BaseModel):
     upper: float
 
 
+class ForecastSummary(BaseModel):
+    mean: float
+    max: float
+    min: float
+    trend: Literal["increasing", "decreasing", "flat"]
+    trend_pct: float
+
+
 class ForecastResponse(BaseModel):
     model_type: str
     horizon_days: int
     points: List[ForecastPoint]
+    assumptions: str
+    summary: ForecastSummary
+    train_size: int
+    test_size: int
+    mae: float
+    rmse: float
+    mape: float
+    r2: float
+    trained_at: dt.datetime
+
+
+class TestPredictionPoint(BaseModel):
+    date: dt.date
+    actual: float
+    predicted: float
+    error: float
+
+
+class TestPredictionsResponse(BaseModel):
+    model_type: str
+    train_size: int
+    test_size: int
+    points: List[TestPredictionPoint]
+
+
+class DataQualitySummary(BaseModel):
+    count: int
+    date_from: Optional[dt.date] = None
+    date_to: Optional[dt.date] = None
+    missing_value_rows: int = 0
+    duplicate_date_rows: int = 0
+    outlier_rows: int = 0
+    usable_rows_for_training: int = 0
+    min_raw_rows_required: int
+    ready_for_training: bool
+    reason: Optional[str] = None

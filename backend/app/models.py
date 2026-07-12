@@ -61,12 +61,17 @@ class TrainingRun(Base):
 
     model_type = Column(String, nullable=False)  # random_forest | xgboost | lightgbm
     horizon_days = Column(Integer, nullable=False, default=30)
+    train_size = Column(Integer, nullable=True)
+    test_size = Column(Integer, nullable=True)
     mae = Column(Float, nullable=False)
     rmse = Column(Float, nullable=False)
     mape = Column(Float, nullable=False)
     r2 = Column(Float, nullable=False)
     feature_importance = Column(JSON, nullable=True)
     residual_std = Column(Float, nullable=True)
+    parameters = Column(JSON, nullable=True)
+    hyperparameters_tuned = Column(Boolean, default=False)
+    assumptions_for_future_features = Column(String, nullable=True)
     trained_at = Column(DateTime, default=dt.datetime.utcnow)
 
     owner = relationship("User", back_populates="training_runs")

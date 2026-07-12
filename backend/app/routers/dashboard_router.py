@@ -4,12 +4,31 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
+from app.ml.pipeline import MIN_USABLE_ROWS, build_features, rank_key
 from app.models import TrainingRun, User
 from app.records import load_records_df
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+
+MODEL_TYPES = ["random_forest", "xgboost", "lightgbm"]
+
+
+def _latest_runs(db: Session, owner_id: int) -> list[TrainingRun]:
+    """Latest training run per model type — the same candidate set used by
+    /api/ml/compare, so the "best model" here always agrees with that page."""
+    runs = []
+    for model_type in MODEL_TYPES:
+        run = (
+            db.query(TrainingRun)
+            .filter(TrainingRun.owner_id == owner_id, TrainingRun.model_type == model_type)
+            .order_by(TrainingRun.trained_at.desc())
+            .first()
+        )
+        if run:
+            runs.append(run)
+    return runs
 
 
 @router.get("/summary")
@@ -18,11 +37,17 @@ def summary(db: Session = Depends(get_db), current_user: User = Depends(get_curr
     if df.empty:
         return {
             "total_records": 0,
+            "usable_rows_for_training": 0,
             "avg_demand_30d": None,
             "avg_price_30d": None,
             "growth_pct": None,
             "best_model": None,
+            "best_mape": None,
             "best_r2": None,
+            "train_size": None,
+            "test_size": None,
+            "last_trained_at": None,
+            "last_forecast_horizon_days": None,
         }
 
     df["date"] = pd.to_datetime(df["date"])
@@ -40,20 +65,30 @@ def summary(db: Session = Depends(get_db), current_user: User = Depends(get_curr
         if prev_avg:
             growth_pct = round((avg_demand_30d - prev_avg) / prev_avg * 100, 1)
 
-    best_run = (
-        db.query(TrainingRun)
-        .filter(TrainingRun.owner_id == current_user.id)
-        .order_by(TrainingRun.r2.desc())
-        .first()
-    )
+    usable_rows = 0
+    try:
+        feat, _ = build_features(df)
+        usable_rows = len(feat)
+    except Exception:
+        pass
+
+    runs = _latest_runs(db, current_user.id)
+    best_run = min(runs, key=rank_key) if runs else None
 
     return {
         "total_records": int(len(df)),
+        "usable_rows_for_training": usable_rows,
+        "min_usable_rows_required": MIN_USABLE_ROWS,
         "avg_demand_30d": round(avg_demand_30d, 1),
         "avg_price_30d": round(avg_price_30d, 2) if avg_price_30d is not None else None,
         "growth_pct": growth_pct,
         "best_model": best_run.model_type if best_run else None,
+        "best_mape": round(best_run.mape, 1) if best_run else None,
         "best_r2": round(best_run.r2, 3) if best_run else None,
+        "train_size": best_run.train_size if best_run else None,
+        "test_size": best_run.test_size if best_run else None,
+        "last_trained_at": best_run.trained_at.isoformat() if best_run else None,
+        "last_forecast_horizon_days": best_run.horizon_days if best_run else None,
     }
 
 

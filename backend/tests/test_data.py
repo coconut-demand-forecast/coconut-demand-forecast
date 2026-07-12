@@ -47,6 +47,59 @@ def test_load_sample(client, auth_headers):
     assert summary["count"] == resp.json()["rows_imported"]
 
 
+def test_upload_dry_run_does_not_write(client, auth_headers):
+    resp = client.post(
+        "/api/data/upload",
+        headers=auth_headers,
+        params={"dry_run": "true"},
+        files={"file": ("data.csv", io.BytesIO(_make_csv(5)), "text/csv")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["dry_run"] is True
+    assert body["rows_imported"] == 5
+
+    summary = client.get("/api/data/summary", headers=auth_headers).json()
+    assert summary["count"] == 0
+
+
+def test_upload_reports_row_level_issues(client, auth_headers):
+    lines = [CSV_HEADER]
+    lines.append("2024-01-01,2000,22,17.5,2200,ฤดูหนาว,0,27,80,45000,ค้าปลีก,0,\n")  # valid
+    lines.append("2024-01-01,2100,22,17.5,2200,ฤดูหนาว,0,27,80,45000,ค้าปลีก,0,\n")  # duplicate date
+    lines.append(",2000,22,17.5,2200,ฤดูหนาว,0,27,80,45000,ค้าปลีก,0,\n")  # missing date
+    lines.append("2024-01-05,not-a-number,22,17.5,2200,ฤดูหนาว,0,27,80,45000,ค้าปลีก,0,\n")  # invalid demand
+    lines.append("2024-01-06,-50,22,17.5,2200,ฤดูหนาว,0,27,80,45000,ค้าปลีก,0,\n")  # negative demand
+    csv_bytes = "".join(lines).encode("utf-8")
+
+    resp = client.post(
+        "/api/data/upload",
+        headers=auth_headers,
+        files={"file": ("data.csv", io.BytesIO(csv_bytes), "text/csv")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["rows_total"] == 5
+    assert body["rows_imported"] == 1
+    assert body["duplicate_date_rows"] == 1
+    assert body["missing_value_rows"] == 1
+    assert body["invalid_demand_rows"] == 1
+    assert body["negative_demand_rows"] == 1
+    assert len(body["warnings"]) == 4
+
+
+def test_upload_all_invalid_rows_rejected(client, auth_headers):
+    lines = [CSV_HEADER, "2024-01-01,-1,22,17.5,2200,ฤดูหนาว,0,27,80,45000,ค้าปลีก,0,\n"]
+    csv_bytes = "".join(lines).encode("utf-8")
+    resp = client.post(
+        "/api/data/upload",
+        headers=auth_headers,
+        files={"file": ("data.csv", io.BytesIO(csv_bytes), "text/csv")},
+    )
+    assert resp.status_code == 400
+    assert "ไม่สามารถนำเข้าข้อมูลได้" in resp.json()["detail"]
+
+
 def test_upload_replace_true_clears_previous(client, auth_headers):
     client.post(
         "/api/data/upload",

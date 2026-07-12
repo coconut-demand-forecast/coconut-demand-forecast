@@ -1,7 +1,24 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AppLayout from '../components/AppLayout';
 import { useLanguage } from '../context/LanguageContext';
 import { mlApi, type ModelMetrics } from '../api';
+
+// Same ranking rule as the backend (app/ml/pipeline.py rank_key): lowest
+// MAPE wins, ties within 0.1 point broken by RMSE, then by R² — kept in
+// sync so this table's order always matches which model /forecast and
+// the dashboard treat as "best".
+function rankKey(m: ModelMetrics): [number, number, number] {
+  return [Math.round(m.mape * 10) / 10, m.rmse, -m.r2];
+}
+function compareRank(a: ModelMetrics, b: ModelMetrics): number {
+  const ka = rankKey(a);
+  const kb = rankKey(b);
+  for (let i = 0; i < ka.length; i++) {
+    if (ka[i] !== kb[i]) return ka[i] - kb[i];
+  }
+  return 0;
+}
 
 const MODEL_NAMES: Record<string, string> = {
   random_forest: 'Random Forest',
@@ -16,8 +33,10 @@ const MODEL_COLORS: Record<string, string> = {
 
 export default function Analytics() {
   const { t, lang } = useLanguage();
+  const navigate = useNavigate();
   const [results, setResults] = useState<ModelMetrics[]>([]);
   const [bestModel, setBestModel] = useState<string | null>(null);
+  const [bestModelReason, setBestModelReason] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [training, setTraining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +48,7 @@ export default function Analytics() {
       const res = await mlApi.compare();
       setResults(res.results);
       setBestModel(res.best_model);
+      setBestModelReason(res.best_model_reason);
     } catch (e: any) {
       if (e?.response?.status === 404) {
         setResults([]);
@@ -59,7 +79,7 @@ export default function Analytics() {
     }
   };
 
-  const sorted = [...results].sort((a, b) => b.r2 - a.r2);
+  const sorted = [...results].sort(compareRank);
   const maxMae = Math.max(...results.map((r) => r.mae), 1);
   const bestResult = sorted[0];
   const features = bestResult ? Object.entries(bestResult.feature_importance).slice(0, 6) : [];
@@ -110,6 +130,11 @@ export default function Analytics() {
             </button>
           </div>
         </div>
+        {bestModelReason && (
+          <div style={{ fontSize: 12, color: 'var(--c-text-muted)', background: '#f7fbf9', borderRadius: 8, padding: '9px 13px', marginBottom: 14 }}>
+            {bestModelReason}
+          </div>
+        )}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 600 }}>
             <thead>
@@ -120,6 +145,7 @@ export default function Analytics() {
                 <th style={{ padding: '11px 14px', fontWeight: 600, textAlign: 'right' }}>MAPE</th>
                 <th style={{ padding: '11px 14px', fontWeight: 600, textAlign: 'right' }}>R&sup2;</th>
                 <th style={{ padding: '11px 14px', fontWeight: 600, textAlign: 'center' }}>{t('rank')}</th>
+                <th style={{ padding: '11px 14px', fontWeight: 600, textAlign: 'center' }}></th>
               </tr>
             </thead>
             <tbody>
@@ -139,6 +165,14 @@ export default function Analytics() {
                     <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 20, background: i === 0 ? '#eaf5ef' : '#f4f4f4', color: i === 0 ? 'var(--c-primary-dark)' : 'var(--c-text-muted)' }}>
                       #{i + 1}
                     </span>
+                  </td>
+                  <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                    <button
+                      onClick={() => navigate(`/forecast?model=${m.model_type}`)}
+                      style={{ border: '1px solid var(--c-border)', background: '#fff', color: 'var(--c-primary-dark)', fontSize: 11.5, fontWeight: 600, padding: '6px 11px', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      {t('useThisModel')}
+                    </button>
                   </td>
                 </tr>
               ))}

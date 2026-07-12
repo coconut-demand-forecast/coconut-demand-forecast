@@ -5,6 +5,16 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from xgboost import XGBRegressor
 
+# Lag/rolling features need 30 prior days of history before they're defined,
+# so the first WARMUP_DAYS rows of any dataset are always dropped.
+WARMUP_DAYS = 30
+# Below this many usable (post-warmup) rows, an 80/20 split leaves too few
+# test rows for MAPE/RMSE to mean anything, so training is refused.
+MIN_USABLE_ROWS = 40
+MIN_RAW_ROWS = WARMUP_DAYS + MIN_USABLE_ROWS
+
+TEST_RATIO = 0.2
+
 BASE_NUMERIC_COLS = [
     "avg_price",
     "cost_price",
@@ -31,6 +41,10 @@ MODEL_FACTORY = {
     ),
 }
 
+# None of these models have been hyperparameter-tuned (grid/random/Bayesian
+# search) for this dataset — the values above are reasonable defaults only.
+HYPERPARAMETERS_TUNED = False
+
 FEATURE_LABELS = {
     "avg_price": "ราคาขายเฉลี่ย",
     "cost_price": "ราคาหน้าสวน/ต้นทุน",
@@ -43,11 +57,11 @@ FEATURE_LABELS = {
     "month": "เดือน",
     "day_of_week": "วันในสัปดาห์",
     "is_weekend": "วันหยุดสุดสัปดาห์",
-    "lag_1": "ยอดขายเมื่อวาน (lag 1)",
-    "lag_7": "ยอดขาย 7 วันก่อน (lag 7)",
-    "lag_30": "ยอดขาย 30 วันก่อน (lag 30)",
-    "roll_mean_7": "ค่าเฉลี่ย 7 วันย้อนหลัง",
-    "roll_mean_30": "ค่าเฉลี่ย 30 วันย้อนหลัง",
+    "lag_1": "ความต้องการย้อนหลัง 1 วัน",
+    "lag_7": "ความต้องการย้อนหลัง 7 วัน",
+    "lag_30": "ความต้องการย้อนหลัง 30 วัน",
+    "roll_mean_7": "ค่าเฉลี่ยความต้องการย้อนหลัง 7 วัน",
+    "roll_mean_30": "ค่าเฉลี่ยความต้องการย้อนหลัง 30 วัน",
 }
 
 
@@ -62,6 +76,18 @@ def feature_label(col: str) -> str:
 
 
 def build_features(records_df: pd.DataFrame):
+    """Build the model feature matrix WITHOUT imputing any statistics.
+
+    Date-derived fields (month/day-of-week/weekend), lag/rolling demand
+    features, and the season/channel one-hot columns are all either
+    deterministic from the date or look only at past demand — none of
+    that depends on train/test split and none of it leaks future
+    information. What IS split-dependent is imputing missing exogenous
+    values (price, temperature, ...) — those NaNs are deliberately left
+    in place here and filled later, in `impute_from_train`, using only
+    statistics from the training portion. Call `build_features` once,
+    then `time_split`, then `impute_from_train` — in that order.
+    """
     df = records_df.sort_values("date").reset_index(drop=True).copy()
     df["date"] = pd.to_datetime(df["date"])
 
@@ -72,14 +98,18 @@ def build_features(records_df: pd.DataFrame):
     df["has_promotion"] = df["has_promotion"].fillna(False).astype(int)
 
     for col in BASE_NUMERIC_COLS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-        df[col] = df[col].fillna(df[col].mean())
+        df[col] = pd.to_numeric(df[col], errors="coerce")  # NaNs kept, filled later from train stats only
 
     df["season"] = df["season"].fillna("ไม่ระบุ").replace("", "ไม่ระบุ")
     df["channel"] = df["channel"].fillna("ไม่ระบุ").replace("", "ไม่ระบุ")
     season_dummies = pd.get_dummies(df["season"], prefix="season")
     channel_dummies = pd.get_dummies(df["channel"], prefix="channel")
 
+    # Lag/rolling look only backward in time relative to each row, so
+    # computing them on the full chronological series before splitting is
+    # not leakage: a test-set row's lag features only ever reference demand
+    # that already happened (often in the training period), exactly as
+    # they would at real prediction time.
     df["lag_1"] = df["demand"].shift(1)
     df["lag_7"] = df["demand"].shift(7)
     df["lag_30"] = df["demand"].shift(30)
@@ -110,10 +140,29 @@ def build_features(records_df: pd.DataFrame):
     return feat, feature_cols
 
 
-def time_split(feat: pd.DataFrame, test_ratio: float = 0.2):
+def time_split(feat: pd.DataFrame, test_ratio: float = TEST_RATIO):
+    """Chronological split — never shuffle a time series. The first
+    (1-test_ratio) share of rows (oldest) becomes train, the rest (most
+    recent) becomes test, matching how the model would actually be used:
+    trained on the past, evaluated on more recent unseen days."""
     n = len(feat)
     split = max(int(n * (1 - test_ratio)), 1)
-    return feat.iloc[:split], feat.iloc[split:]
+    return feat.iloc[:split].copy(), feat.iloc[split:].copy()
+
+
+def impute_from_train(train_df: pd.DataFrame, test_df: pd.DataFrame, cols: list[str]):
+    """Fill missing exogenous values using ONLY training-set means.
+
+    Applying the same train-derived means to the test set (rather than
+    each split's own mean) is what prevents test-period statistics from
+    leaking into how training data gets filled, and vice versa.
+    """
+    train_means = train_df[cols].mean()
+    train_df = train_df.copy()
+    test_df = test_df.copy()
+    train_df[cols] = train_df[cols].fillna(train_means)
+    test_df[cols] = test_df[cols].fillna(train_means)
+    return train_df, test_df, train_means
 
 
 def train_and_evaluate(records_df: pd.DataFrame, model_type: str) -> dict:
@@ -121,12 +170,16 @@ def train_and_evaluate(records_df: pd.DataFrame, model_type: str) -> dict:
         raise ValueError(f"ไม่รู้จักโมเดล: {model_type}")
 
     feat, feature_cols = build_features(records_df)
-    if len(feat) < 40:
+    if len(feat) < MIN_USABLE_ROWS:
         raise ValueError(
-            "ข้อมูลไม่เพียงพอสำหรับเทรนโมเดล (ต้องการข้อมูลอย่างน้อยประมาณ 70 วันขึ้นไป)"
+            f"ข้อมูลไม่เพียงพอสำหรับเทรนโมเดล ต้องการข้อมูลดิบอย่างน้อย {MIN_RAW_ROWS} วัน "
+            f"(ตัดข้อมูล {WARMUP_DAYS} วันแรกสำหรับสร้าง Lag/Rolling Mean แล้วเหลือใช้ได้จริง {len(feat)} วัน "
+            f"ต้องการอย่างน้อย {MIN_USABLE_ROWS} วัน)"
         )
 
     train_df, test_df = time_split(feat)
+    train_df, test_df, train_means = impute_from_train(train_df, test_df, BASE_NUMERIC_COLS)
+
     X_train, y_train = train_df[feature_cols], train_df["demand"]
     X_test, y_test = test_df[feature_cols], test_df["demand"]
 
@@ -152,13 +205,53 @@ def train_and_evaluate(records_df: pd.DataFrame, model_type: str) -> dict:
         }
         feature_importance = dict(sorted(pct.items(), key=lambda kv: -kv[1])[:8])
 
+    test_dates = pd.to_datetime(test_df["date"]).dt.date.tolist()
+    test_predictions = [
+        {
+            "date": d,
+            "actual": round(float(a), 1),
+            "predicted": round(float(p), 1),
+            "error": round(float(p) - float(a), 1),
+        }
+        for d, a, p in zip(test_dates, y_test.values, y_pred)
+    ]
+
     return {
         "model": model,
         "feature_cols": feature_cols,
+        "train_means": train_means,
         "mae": mae,
         "rmse": rmse,
         "mape": mape,
         "r2": r2,
         "residual_std": residual_std,
         "feature_importance": feature_importance,
+        "usable_rows": len(feat),
+        "train_size": len(train_df),
+        "test_size": len(test_df),
+        "hyperparameters_tuned": HYPERPARAMETERS_TUNED,
+        "parameters": _model_params(model_type),
+        "test_predictions": test_predictions,
     }
+
+
+def _model_params(model_type: str) -> dict:
+    """Human-readable hyperparameters actually used to train, for logging."""
+    params = {
+        "random_forest": {"n_estimators": 300, "max_depth": 12, "random_state": 42},
+        "xgboost": {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.05, "random_state": 42},
+        "lightgbm": {"n_estimators": 300, "max_depth": -1, "learning_rate": 0.05, "random_state": 42},
+    }
+    return params[model_type]
+
+
+def rank_key(result_like) -> tuple:
+    """Best-model ranking used everywhere in the app: lowest MAPE first,
+    ties within 0.1 percentage point broken by lowest RMSE, further ties
+    broken by highest R². `result_like` needs .mape, .rmse, .r2 attributes
+    or dict keys — pass whichever object each caller already has."""
+    def get(obj, key):
+        return obj[key] if isinstance(obj, dict) else getattr(obj, key)
+
+    mape_bucket = round(get(result_like, "mape"), 1)  # 0.1-point tolerance for "close enough"
+    return (mape_bucket, get(result_like, "rmse"), -get(result_like, "r2"))

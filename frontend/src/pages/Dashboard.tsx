@@ -27,6 +27,7 @@ export default function Dashboard() {
   const { t, lang } = useLanguage();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [chartData, setChartData] = useState<{ date: string; actual?: number; forecast?: number }[]>([]);
+  const [hasForecast, setHasForecast] = useState(false);
   const [channels, setChannels] = useState<ChannelBreakdown[]>([]);
   const [seasonal, setSeasonal] = useState<SeasonalPoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,8 +58,10 @@ export default function Dashboard() {
             const fc = await mlApi.forecast(s.best_model, 30);
             const forecastPoints = fc.points.map((p) => ({ date: p.date, forecast: p.predicted }));
             combined = [...actualPoints, ...forecastPoints];
+            if (!cancelled) setHasForecast(true);
           } catch {
-            // forecast optional on dashboard; ignore failures
+            // forecast optional on dashboard; ignore failures — chart just
+            // stays actual-only and keeps the "historical only" title.
           }
         }
         setChartData(combined);
@@ -131,7 +134,9 @@ export default function Dashboard() {
         <div className="card">
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
             <div>
-              <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>{t('demandTitle')}</div>
+              <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>
+                {hasForecast ? t('chartTitleActualAndForecast') : t('chartTitleActualOnly')}
+              </div>
               <div style={{ fontSize: 12, color: 'var(--c-text-faint)' }}>{t('demandSub')}</div>
             </div>
             <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--c-text-muted)' }}>
@@ -139,10 +144,12 @@ export default function Dashboard() {
                 <span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--c-primary-dark)' }} />
                 {t('actual')}
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--c-primary-light)' }} />
-                {t('forecast')}
-              </span>
+              {hasForecast && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--c-primary-light)' }} />
+                  {t('forecast')}
+                </span>
+              )}
             </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
@@ -207,21 +214,37 @@ export default function Dashboard() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--c-primary)' }} />
                 <span className="font-heading" style={{ fontWeight: 600, fontSize: 16 }}>{summary.best_model}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--c-text-faint)' }}>R&sup2; {summary.best_r2}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--c-text-faint)' }}>MAPE {summary.best_mape}%</span>
               </div>
-              <p style={{ fontSize: 12, color: 'var(--c-text-faint)', lineHeight: 1.6 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                <Row label="R²" value={String(summary.best_r2)} />
+                <Row label={t('kpiTrainTest')} value={`${summary.train_size ?? '-'} / ${summary.test_size ?? '-'}`} />
+                <Row
+                  label={t('lblLastTrained')}
+                  value={summary.last_trained_at ? new Date(summary.last_trained_at).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US') : '-'}
+                />
+                <Row label={t('lblLastHorizon')} value={summary.last_forecast_horizon_days ? `${summary.last_forecast_horizon_days} ${lang === 'th' ? 'วัน' : 'days'}` : '-'} />
+              </div>
+              <p style={{ fontSize: 11.5, color: 'var(--c-text-faint)', lineHeight: 1.6, marginTop: 4 }}>
                 {lang === 'th'
                   ? 'ไปที่หน้า "พยากรณ์" เพื่อดูรายละเอียดและปรับระยะเวลาพยากรณ์'
                   : 'Go to the Forecasting page to see details and adjust the horizon.'}
               </p>
             </div>
           ) : (
-            <p style={{ fontSize: 12.5, color: 'var(--c-text-faint)' }}>
-              {lang === 'th' ? 'ยังไม่มีการเทรนโมเดล' : 'No model trained yet'}
-            </p>
+            <p style={{ fontSize: 12.5, color: 'var(--c-text-faint)' }}>{t('noModelYet')}</p>
           )}
         </div>
       </div>
     </AppLayout>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+      <span style={{ color: 'var(--c-text-faint)' }}>{label}</span>
+      <span style={{ fontWeight: 600, color: 'var(--c-text-soft)' }}>{value}</span>
+    </div>
   );
 }
