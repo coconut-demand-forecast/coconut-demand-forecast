@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import AppLayout from '../components/AppLayout';
+import Spinner from '../components/Spinner';
 import { useLanguage } from '../context/LanguageContext';
+import { useToast } from '../context/ToastContext';
 import { locationsApi, type LocationCompareItem } from '../api';
 
 const MODEL_NAMES: Record<string, string> = {
@@ -13,6 +15,7 @@ const MODEL_NAMES: Record<string, string> = {
 
 export default function LocationCompare() {
   const { t, lang } = useLanguage();
+  const { showError } = useToast();
   const navigate = useNavigate();
   const [items, setItems] = useState<LocationCompareItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,7 +33,9 @@ export default function LocationCompare() {
       const res = await locationsApi.compare(true);
       setItems([...res.locations].sort((a, b) => b.avg_demand - a.avg_demand));
     } catch (e: any) {
-      setError(e?.response?.data?.detail || (lang === 'th' ? 'โหลดข้อมูลไม่สำเร็จ' : 'Failed to load'));
+      const msg = e?.response?.data?.detail || (lang === 'th' ? 'โหลดข้อมูลไม่สำเร็จ' : 'Failed to load');
+      setError(msg);
+      showError(msg);
     } finally {
       setLoading(false);
     }
@@ -39,7 +44,8 @@ export default function LocationCompare() {
   if (loading) {
     return (
       <AppLayout title={t('navLocationCompare')}>
-        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--c-text-faint)' }}>
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--c-text-faint)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+          <Spinner size={22} color="var(--c-primary)" />
           {t('locTraining')}
         </div>
       </AppLayout>

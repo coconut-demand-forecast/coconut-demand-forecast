@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '../components/AppLayout';
 import LocationSelector from '../components/LocationSelector';
+import Spinner from '../components/Spinner';
 import { useLanguage } from '../context/LanguageContext';
+import { useToast } from '../context/ToastContext';
 import { mlApi, type ModelMetrics } from '../api';
 
 // Same ranking rule as the backend (app/ml/pipeline.py rank_key): lowest
@@ -34,6 +36,7 @@ const MODEL_COLORS: Record<string, string> = {
 
 export default function Analytics() {
   const { t, lang } = useLanguage();
+  const { showSuccess, showError } = useToast();
   const navigate = useNavigate();
   const [results, setResults] = useState<ModelMetrics[]>([]);
   const [bestModel, setBestModel] = useState<string | null>(null);
@@ -73,10 +76,17 @@ export default function Analytics() {
     setTraining(true);
     setError(null);
     try {
-      await mlApi.train(['random_forest', 'xgboost', 'lightgbm'], 30, location);
+      const res = await mlApi.train(['random_forest', 'xgboost', 'lightgbm'], 30, location);
       await load(location);
+      showSuccess(
+        lang === 'th'
+          ? `เทรนสำเร็จ — โมเดลที่ดีที่สุด: ${MODEL_NAMES[res.best_model] ?? res.best_model}`
+          : `Training complete — Best model: ${MODEL_NAMES[res.best_model] ?? res.best_model}`
+      );
     } catch (e: any) {
-      setError(e?.response?.data?.detail || (lang === 'th' ? 'เทรนโมเดลไม่สำเร็จ' : 'Training failed'));
+      const msg = e?.response?.data?.detail || (lang === 'th' ? 'เทรนโมเดลไม่สำเร็จ' : 'Training failed');
+      setError(msg);
+      showError(msg);
     } finally {
       setTraining(false);
     }
@@ -94,7 +104,10 @@ export default function Analytics() {
   if (!locationReady || loading) {
     return (
       <AppLayout title={t('navAnalytics')} headerExtra={headerExtra}>
-        <div style={{ padding: 40, color: 'var(--c-text-faint)' }}>{t('loading')}</div>
+        <div style={{ padding: 40, color: 'var(--c-text-faint)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Spinner size={16} color="var(--c-primary)" />
+          {t('loading')}
+        </div>
       </AppLayout>
     );
   }
@@ -106,7 +119,8 @@ export default function Analytics() {
           <p style={{ color: 'var(--c-text-faint)', marginBottom: 16 }}>
             {lang === 'th' ? 'ยังไม่มีการเทรนโมเดล กดปุ่มด้านล่างเพื่อเทรนและเปรียบเทียบทั้ง 3 โมเดล' : 'No trained models yet. Click below to train and compare all 3 models.'}
           </p>
-          <button className="btn-primary" onClick={trainAll} disabled={training}>
+          <button className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={trainAll} disabled={training}>
+            {training && <Spinner size={13} color="#fff" />}
             {training ? t('training') : t('trainModel')}
           </button>
           {error && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--c-danger)' }}>{error}</div>}
@@ -129,10 +143,11 @@ export default function Analytics() {
             </span>
             <button
               className="btn-primary"
-              style={{ fontSize: 12.5, padding: '9px 16px' }}
+              style={{ fontSize: 12.5, padding: '9px 16px', display: 'inline-flex', alignItems: 'center', gap: 8 }}
               onClick={trainAll}
               disabled={training}
             >
+              {training && <Spinner size={12} color="#fff" />}
               {training ? t('training') : lang === 'th' ? 'เทรนใหม่' : 'Retrain'}
             </button>
           </div>

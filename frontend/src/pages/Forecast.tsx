@@ -3,7 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import { CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, Area } from 'recharts';
 import AppLayout from '../components/AppLayout';
 import LocationSelector from '../components/LocationSelector';
+import Spinner from '../components/Spinner';
 import { useLanguage } from '../context/LanguageContext';
+import { useToast } from '../context/ToastContext';
 import {
   dataApi,
   mlApi,
@@ -29,6 +31,7 @@ type Stage = 'idle' | 'validate' | 'train' | 'forecast' | 'done';
 
 export default function Forecast() {
   const { t, lang } = useLanguage();
+  const { showSuccess, showError } = useToast();
   const [searchParams] = useSearchParams();
   const preselectedModel = searchParams.get('model');
   const preselectedLocation = searchParams.get('location') ?? undefined;
@@ -62,7 +65,9 @@ export default function Forecast() {
       setStage('validate');
       const quality: DataQualitySummary = await dataApi.quality(location);
       if (!quality.ready_for_training) {
-        setError(quality.reason || (lang === 'th' ? 'ข้อมูลไม่พร้อมสำหรับเทรนโมเดล' : 'Data not ready for training'));
+        const msg = quality.reason || (lang === 'th' ? 'ข้อมูลไม่พร้อมสำหรับเทรนโมเดล' : 'Data not ready for training');
+        setError(msg);
+        showError(msg);
         setStage('idle');
         return;
       }
@@ -81,8 +86,15 @@ export default function Forecast() {
       setTestChartData(tp.points.map((p) => ({ date: p.date, actual: p.actual, predicted: p.predicted })));
 
       setStage('done');
+      showSuccess(
+        lang === 'th'
+          ? `พยากรณ์สำเร็จ — MAPE ${fc.mape.toFixed(1)}%`
+          : `Forecast complete — MAPE ${fc.mape.toFixed(1)}%`
+      );
     } catch (e: any) {
-      setError(e?.response?.data?.detail || (lang === 'th' ? 'เกิดข้อผิดพลาด' : 'Something went wrong'));
+      const msg = e?.response?.data?.detail || (lang === 'th' ? 'เกิดข้อผิดพลาด' : 'Something went wrong');
+      setError(msg);
+      showError(msg);
       setStage('idle');
     }
   };
@@ -171,7 +183,13 @@ export default function Forecast() {
             </div>
           </div>
 
-          <button className="btn-primary" style={{ width: '100%', fontSize: 14, padding: 13 }} disabled={busy || !locationReady} onClick={runPipeline}>
+          <button
+            className="btn-primary"
+            style={{ width: '100%', fontSize: 14, padding: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9 }}
+            disabled={busy || !locationReady}
+            onClick={runPipeline}
+          >
+            {busy && <Spinner size={14} color="#fff" />}
             {busy ? stageMessage : t('trainModel')}
           </button>
           {busy && (

@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import AppLayout from '../components/AppLayout';
+import Spinner from '../components/Spinner';
 import { useLanguage } from '../context/LanguageContext';
+import { useToast } from '../context/ToastContext';
 import { dataApi, type DataQualitySummary, type DemandRecord, type UploadResult } from '../api';
 
 export default function DataPage() {
   const { t, lang } = useLanguage();
+  const { showSuccess, showError } = useToast();
   const [quality, setQuality] = useState<DataQualitySummary | null>(null);
   const [records, setRecords] = useState<DemandRecord[]>([]);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [pendingReport, setPendingReport] = useState<UploadResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -31,8 +33,7 @@ export default function DataPage() {
 
   const handleFile = async (file: File) => {
     setBusy(true);
-    setError(null);
-    setMessage(null);
+    setBusyLabel(t('checkingFile'));
     try {
       const report = await dataApi.upload(file, true);
       if (report.existing_rows_to_replace > 0) {
@@ -40,60 +41,65 @@ export default function DataPage() {
         setPendingReport(report);
       } else {
         const res = await dataApi.upload(file, false);
-        setMessage(
-          `${lang === 'th' ? 'นำเข้าสำเร็จ' : 'Imported'}: ${res.rows_imported}/${res.rows_total} ${t('unitRecords')}`
+        showSuccess(
+          `${lang === 'th' ? 'นำเข้าข้อมูลสำเร็จ' : 'Import successful'}: ${res.rows_imported}/${res.rows_total} ${t('unitRecords')}`
         );
         await refresh();
       }
     } catch (e: any) {
-      setError(e?.response?.data?.detail || (lang === 'th' ? 'อัปโหลดไม่สำเร็จ' : 'Upload failed'));
+      showError(e?.response?.data?.detail || (lang === 'th' ? 'อัปโหลดไม่สำเร็จ' : 'Upload failed'));
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   };
 
   const confirmReplace = async () => {
     if (!pendingFile) return;
     setBusy(true);
-    setError(null);
+    setBusyLabel(lang === 'th' ? 'กำลังนำเข้าข้อมูล...' : 'Importing data...');
     try {
       const res = await dataApi.upload(pendingFile, false);
-      setMessage(
-        `${lang === 'th' ? 'นำเข้าสำเร็จ' : 'Imported'}: ${res.rows_imported}/${res.rows_total} ${t('unitRecords')}`
+      showSuccess(
+        `${lang === 'th' ? 'นำเข้าข้อมูลสำเร็จ' : 'Import successful'}: ${res.rows_imported}/${res.rows_total} ${t('unitRecords')}`
       );
       closeConfirm();
       await refresh();
     } catch (e: any) {
-      setError(e?.response?.data?.detail || (lang === 'th' ? 'อัปโหลดไม่สำเร็จ' : 'Upload failed'));
+      showError(e?.response?.data?.detail || (lang === 'th' ? 'อัปโหลดไม่สำเร็จ' : 'Upload failed'));
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   };
 
   const handleLoadSample = async () => {
     setBusy(true);
-    setError(null);
-    setMessage(null);
+    setBusyLabel(lang === 'th' ? 'กำลังโหลดข้อมูลตัวอย่าง...' : 'Loading sample data...');
     try {
       const res = await dataApi.loadSample();
-      setMessage(`${lang === 'th' ? 'โหลดข้อมูลตัวอย่างสำเร็จ' : 'Sample data loaded'}: ${res.rows_imported} ${t('unitRecords')}`);
+      showSuccess(`${lang === 'th' ? 'โหลดข้อมูลตัวอย่างสำเร็จ' : 'Sample data loaded'}: ${res.rows_imported} ${t('unitRecords')}`);
       await refresh();
     } catch (e: any) {
-      setError(e?.response?.data?.detail || (lang === 'th' ? 'โหลดข้อมูลไม่สำเร็จ' : 'Load failed'));
+      showError(e?.response?.data?.detail || (lang === 'th' ? 'โหลดข้อมูลไม่สำเร็จ' : 'Load failed'));
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   };
 
   const handleClear = async () => {
     setBusy(true);
-    setError(null);
-    setMessage(null);
+    setBusyLabel(lang === 'th' ? 'กำลังล้างข้อมูล...' : 'Clearing data...');
     try {
       await dataApi.clear();
+      showSuccess(lang === 'th' ? 'ล้างข้อมูลสำเร็จ' : 'Data cleared');
       await refresh();
+    } catch (e: any) {
+      showError(e?.response?.data?.detail || (lang === 'th' ? 'ล้างข้อมูลไม่สำเร็จ' : 'Clear failed'));
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   };
 
@@ -154,21 +160,32 @@ export default function DataPage() {
                   e.target.value = '';
                 }}
               />
-              <button className="btn-primary" style={{ fontSize: 13.5, padding: '11px 22px' }} disabled={busy} onClick={() => fileInputRef.current?.click()}>
-                {busy && !pendingFile ? t('checkingFile') : t('chooseFile')}
+              <button
+                className="btn-primary"
+                style={{ fontSize: 13.5, padding: '11px 22px', display: 'flex', alignItems: 'center', gap: 8 }}
+                disabled={busy}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {busy && !pendingFile && <Spinner size={13} color="#fff" />}
+                {t('chooseFile')}
               </button>
               <button
                 className="btn-primary"
-                style={{ fontSize: 13.5, padding: '11px 22px', background: '#fff', color: 'var(--c-primary-dark)', border: '1px solid var(--c-border)', boxShadow: 'none' }}
+                style={{ fontSize: 13.5, padding: '11px 22px', background: '#fff', color: 'var(--c-primary-dark)', border: '1px solid var(--c-border)', boxShadow: 'none', display: 'flex', alignItems: 'center', gap: 8 }}
                 disabled={busy}
                 onClick={handleLoadSample}
               >
+                {busy && <Spinner size={13} color="var(--c-primary-dark)" />}
                 {t('loadSample')}
               </button>
             </div>
           </div>
-          {message && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--c-primary-dark)' }}>{message}</div>}
-          {error && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--c-danger)', whiteSpace: 'pre-line' }}>{error}</div>}
+          {busy && busyLabel && (
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--c-text-muted)' }}>
+              <Spinner size={13} color="var(--c-primary)" />
+              {busyLabel}
+            </div>
+          )}
         </div>
 
         <div className="card" style={{ padding: 22 }}>
@@ -262,6 +279,7 @@ export default function DataPage() {
             disabled={busy || !quality?.count}
             style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid rgba(255,255,255,.4)', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 600, fontSize: 13.5, padding: '11px 18px', borderRadius: 10 }}
           >
+            {busy && <Spinner size={13} color="#fff" />}
             {t('clearData')}
           </button>
         </div>
@@ -317,7 +335,8 @@ export default function DataPage() {
               >
                 {t('cancelBtn')}
               </button>
-              <button className="btn-primary" style={{ fontSize: 13, padding: '10px 18px' }} disabled={busy} onClick={confirmReplace}>
+              <button className="btn-primary" style={{ fontSize: 13, padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8 }} disabled={busy} onClick={confirmReplace}>
+                {busy && <Spinner size={13} color="#fff" />}
                 {t('confirmImportBtn')}
               </button>
             </div>

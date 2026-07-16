@@ -13,7 +13,9 @@ import {
 import AppLayout from '../components/AppLayout';
 import KpiCard from '../components/KpiCard';
 import LocationSelector from '../components/LocationSelector';
+import Spinner from '../components/Spinner';
 import { useLanguage } from '../context/LanguageContext';
+import { useToast } from '../context/ToastContext';
 import {
   dashboardApi,
   mlApi,
@@ -26,6 +28,7 @@ const CHANNEL_COLORS = ['#14664a', '#1f8a5b', '#2fa76d', '#7ee0a8'];
 
 export default function Dashboard() {
   const { t, lang } = useLanguage();
+  const { showError } = useToast();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [chartData, setChartData] = useState<{ date: string; actual?: number; forecast?: number }[]>([]);
   const [hasForecast, setHasForecast] = useState(false);
@@ -71,7 +74,11 @@ export default function Dashboard() {
         }
         setChartData(combined);
       } catch (e: any) {
-        if (!cancelled) setError(e?.response?.data?.detail || 'โหลดข้อมูลไม่สำเร็จ');
+        if (!cancelled) {
+          const msg = e?.response?.data?.detail || 'โหลดข้อมูลไม่สำเร็จ';
+          setError(msg);
+          showError(msg);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -89,7 +96,10 @@ export default function Dashboard() {
   if (!locationReady || loading) {
     return (
       <AppLayout title={t('navDashboard')} headerExtra={headerExtra}>
-        <div style={{ padding: 40, color: 'var(--c-text-faint)' }}>{t('loading')}</div>
+        <div style={{ padding: 40, color: 'var(--c-text-faint)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Spinner size={16} color="var(--c-primary)" />
+          {t('loading')}
+        </div>
       </AppLayout>
     );
   }
