@@ -32,9 +32,23 @@ const NAV_ICONS: Record<string, ReactNode> = {
       <path d="M7 15l4-5 3 3 5-7" />
     </svg>
   ),
+  locationCompare: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21z" />
+      <circle cx="12" cy="9.5" r="2.3" />
+    </svg>
+  ),
 };
 
-export default function AppLayout({ title, children }: { title: string; children: ReactNode }) {
+export default function AppLayout({
+  title,
+  headerExtra,
+  children,
+}: {
+  title: string;
+  headerExtra?: ReactNode;
+  children: ReactNode;
+}) {
   const { user, logout } = useAuth();
   const { lang, setLang, t } = useLanguage();
   const navigate = useNavigate();
@@ -44,6 +58,7 @@ export default function AppLayout({ title, children }: { title: string; children
     { to: '/data', key: 'data', label: t('navData') },
     { to: '/forecast', key: 'forecast', label: t('navForecast') },
     { to: '/analytics', key: 'analytics', label: t('navAnalytics') },
+    { to: '/locations', key: 'locationCompare', label: t('navLocationCompare') },
   ];
 
   const doLogout = () => {
@@ -153,6 +168,7 @@ export default function AppLayout({ title, children }: { title: string; children
             <h1 className="font-heading" style={{ margin: 0, fontWeight: 600, fontSize: 22, color: 'var(--c-text)' }}>{title}</h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {headerExtra}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid var(--c-border)', borderRadius: 10, padding: '8px 13px' }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--c-primary-light)', boxShadow: '0 0 0 3px rgba(47,167,109,.16)' }} />
               <span style={{ fontSize: 12.5, color: 'var(--c-text-muted)', fontWeight: 500 }}>{t('synthetic')}</span>

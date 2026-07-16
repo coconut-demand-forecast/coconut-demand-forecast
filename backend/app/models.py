@@ -37,6 +37,7 @@ class DemandRecord(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     date = Column(Date, nullable=False, index=True)
+    location = Column(String, nullable=True, index=True)
     demand = Column(Float, nullable=False)
     avg_price = Column(Float, nullable=True)
     cost_price = Column(Float, nullable=True)
@@ -60,6 +61,7 @@ class TrainingRun(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     model_type = Column(String, nullable=False)  # random_forest | xgboost | lightgbm
+    location = Column(String, nullable=True, index=True)
     horizon_days = Column(Integer, nullable=False, default=30)
     train_size = Column(Integer, nullable=True)
     test_size = Column(Integer, nullable=True)

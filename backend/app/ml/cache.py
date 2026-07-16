@@ -1,12 +1,14 @@
-_cache: dict[tuple[int, str], dict] = {}
+from typing import Optional
+
+_cache: dict[tuple[int, Optional[str], str], dict] = {}
 
 
-def set_trained(user_id: int, model_type: str, payload: dict) -> None:
-    _cache[(user_id, model_type)] = payload
+def set_trained(user_id: int, location: Optional[str], model_type: str, payload: dict) -> None:
+    _cache[(user_id, location, model_type)] = payload
 
 
-def get_trained(user_id: int, model_type: str) -> dict | None:
-    return _cache.get((user_id, model_type))
+def get_trained(user_id: int, location: Optional[str], model_type: str) -> dict | None:
+    return _cache.get((user_id, location, model_type))
 
 
 def clear_user(user_id: int) -> None:

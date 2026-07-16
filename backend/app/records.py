@@ -1,19 +1,20 @@
+from typing import Optional
+
 import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.models import DemandRecord
 
 
-def load_records_df(db: Session, owner_id: int) -> pd.DataFrame:
-    rows = (
-        db.query(DemandRecord)
-        .filter(DemandRecord.owner_id == owner_id)
-        .order_by(DemandRecord.date.asc())
-        .all()
-    )
+def load_records_df(db: Session, owner_id: int, location: Optional[str] = None) -> pd.DataFrame:
+    q = db.query(DemandRecord).filter(DemandRecord.owner_id == owner_id)
+    if location is not None:
+        q = q.filter(DemandRecord.location == location)
+    rows = q.order_by(DemandRecord.date.asc()).all()
     data = [
         {
             "date": r.date,
+            "location": r.location,
             "demand": r.demand,
             "avg_price": r.avg_price,
             "cost_price": r.cost_price,
@@ -29,3 +30,14 @@ def load_records_df(db: Session, owner_id: int) -> pd.DataFrame:
         for r in rows
     ]
     return pd.DataFrame(data)
+
+
+def list_locations(db: Session, owner_id: int) -> list[str]:
+    rows = (
+        db.query(DemandRecord.location)
+        .filter(DemandRecord.owner_id == owner_id, DemandRecord.location.isnot(None))
+        .distinct()
+        .order_by(DemandRecord.location.asc())
+        .all()
+    )
+    return [r[0] for r in rows]

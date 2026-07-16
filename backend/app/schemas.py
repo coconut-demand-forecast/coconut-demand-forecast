@@ -34,6 +34,7 @@ class TokenOut(BaseModel):
 
 class DemandRecordIn(BaseModel):
     date: dt.date
+    location: Optional[str] = None
     demand: float
     avg_price: Optional[float] = None
     cost_price: Optional[float] = None
@@ -156,3 +157,17 @@ class DataQualitySummary(BaseModel):
     min_raw_rows_required: int
     ready_for_training: bool
     reason: Optional[str] = None
+
+
+class LocationCompareItem(BaseModel):
+    location: str
+    record_count: int
+    avg_demand: float
+    best_model: Optional[str] = None
+    best_mape: Optional[float] = None
+    best_rmse: Optional[float] = None
+    best_r2: Optional[float] = None
+
+
+class LocationCompareResponse(BaseModel):
+    locations: List[LocationCompareItem]

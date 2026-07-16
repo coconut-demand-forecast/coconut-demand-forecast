@@ -14,6 +14,7 @@ COLUMN_MAP = {
     "ปริมาณน้ำฝน (มม.)": "rainfall",
     "จำนวนนักท่องเที่ยว (คน)": "tourists",
     "ช่องทางจำหน่าย": "channel",
+    "จังหวัด": "location",
     "มีโปรโมชั่น (0/1)": "has_promotion",
     "หมายเหตุ": "note",
 }
@@ -111,9 +112,12 @@ def parse_upload(filename: str, content: bytes) -> tuple[pd.DataFrame, dict]:
     negative_demand_rows = int(negative_mask.sum())
     df = df[~negative_mask].reset_index(drop=True)
 
-    # 5. Duplicate dates (keep last occurrence)
-    df = df.sort_values("date").reset_index(drop=True)
-    dup_mask = df.duplicated(subset=["date"], keep="last")
+    # 5. Duplicate dates — with multi-location data the same date legitimately
+    # repeats once per location, so dedup on (date, location) when a location
+    # column is present, otherwise on date alone (single-series data).
+    dedup_subset = ["date", "location"] if "location" in df.columns else ["date"]
+    df = df.sort_values(dedup_subset).reset_index(drop=True)
+    dup_mask = df.duplicated(subset=dedup_subset, keep="last")
     duplicate_date_rows = int(dup_mask.sum())
     df = df[~dup_mask].reset_index(drop=True)
 
@@ -137,7 +141,7 @@ def parse_upload(filename: str, content: bytes) -> tuple[pd.DataFrame, dict]:
         else:
             df[col] = False
 
-    for col in ["season", "channel", "note"]:
+    for col in ["season", "channel", "location", "note"]:
         if col not in df.columns:
             df[col] = None
         else:

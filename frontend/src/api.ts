@@ -152,6 +152,7 @@ export interface UploadResult {
 export interface DemandRecord {
   id: number;
   date: string;
+  location: string | null;
   demand: number;
   avg_price: number | null;
   cost_price: number | null;
@@ -160,6 +161,20 @@ export interface DemandRecord {
   channel: string | null;
   is_holiday: boolean;
   has_promotion: boolean;
+}
+
+export interface LocationCompareItem {
+  location: string;
+  record_count: number;
+  avg_demand: number;
+  best_model: string | null;
+  best_mape: number | null;
+  best_rmse: number | null;
+  best_r2: number | null;
+}
+
+export interface LocationCompareResponse {
+  locations: LocationCompareItem[];
 }
 
 export const authApi = {
@@ -183,40 +198,63 @@ export const dataApi = {
   },
   loadSample: () => api.post<UploadResult>('/api/data/load-sample').then((r) => r.data),
   summary: () => api.get('/api/data/summary').then((r) => r.data),
-  quality: () => api.get<DataQualitySummary>('/api/data/quality').then((r) => r.data),
-  records: (limit = 20) =>
-    api.get<DemandRecord[]>('/api/data/records', { params: { limit } }).then((r) => r.data),
+  quality: (location?: string) =>
+    api.get<DataQualitySummary>('/api/data/quality', { params: { location } }).then((r) => r.data),
+  records: (limit = 20, location?: string) =>
+    api.get<DemandRecord[]>('/api/data/records', { params: { limit, location } }).then((r) => r.data),
+  locations: () =>
+    api.get<{ locations: string[] }>('/api/data/locations').then((r) => r.data.locations),
   clear: () => api.delete('/api/data/records').then((r) => r.data),
-  exportUrl: () => `${API_URL}/api/data/export`,
+  exportUrl: (location?: string) =>
+    `${API_URL}/api/data/export${location ? `?location=${encodeURIComponent(location)}` : ''}`,
 };
 
 export const mlApi = {
-  train: (models: string[], horizonDays: number) =>
+  train: (models: string[], horizonDays: number, location?: string) =>
     api
-      .post<TrainResponse>('/api/ml/train', { models, horizon_days: horizonDays })
+      .post<TrainResponse>(
+        '/api/ml/train',
+        { models, horizon_days: horizonDays },
+        { params: { location } }
+      )
       .then((r) => r.data),
-  compare: () => api.get<TrainResponse>('/api/ml/compare').then((r) => r.data),
-  forecast: (model: string, horizonDays: number) =>
+  compare: (location?: string) =>
+    api.get<TrainResponse>('/api/ml/compare', { params: { location } }).then((r) => r.data),
+  forecast: (model: string, horizonDays: number, location?: string) =>
     api
-      .get<ForecastResponse>('/api/ml/forecast', { params: { model, horizon_days: horizonDays } })
+      .get<ForecastResponse>('/api/ml/forecast', { params: { model, horizon_days: horizonDays, location } })
       .then((r) => r.data),
-  testPredictions: (model: string) =>
+  testPredictions: (model: string, location?: string) =>
     api
-      .get<TestPredictionsResponse>('/api/ml/test-predictions', { params: { model } })
+      .get<TestPredictionsResponse>('/api/ml/test-predictions', { params: { model, location } })
       .then((r) => r.data),
-  forecastExportUrl: (model: string, horizonDays: number) =>
-    `${API_URL}/api/ml/forecast/export?model=${model}&horizon_days=${horizonDays}`,
-  compareExportUrl: () => `${API_URL}/api/ml/compare/export`,
+  forecastExportUrl: (model: string, horizonDays: number, location?: string) =>
+    `${API_URL}/api/ml/forecast/export?model=${model}&horizon_days=${horizonDays}` +
+    (location ? `&location=${encodeURIComponent(location)}` : ''),
+  compareExportUrl: (location?: string) =>
+    `${API_URL}/api/ml/compare/export` + (location ? `?location=${encodeURIComponent(location)}` : ''),
 };
 
 export const dashboardApi = {
-  summary: () => api.get<DashboardSummary>('/api/dashboard/summary').then((r) => r.data),
-  demandSeries: (days = 180) =>
+  summary: (location?: string) =>
+    api.get<DashboardSummary>('/api/dashboard/summary', { params: { location } }).then((r) => r.data),
+  demandSeries: (days = 180, location?: string) =>
     api
-      .get<DemandSeriesPoint[]>('/api/dashboard/demand-series', { params: { days } })
+      .get<DemandSeriesPoint[]>('/api/dashboard/demand-series', { params: { days, location } })
       .then((r) => r.data),
-  channelBreakdown: () =>
-    api.get<ChannelBreakdown[]>('/api/dashboard/channel-breakdown').then((r) => r.data),
-  seasonalPattern: () =>
-    api.get<SeasonalPoint[]>('/api/dashboard/seasonal-pattern').then((r) => r.data),
+  channelBreakdown: (location?: string) =>
+    api
+      .get<ChannelBreakdown[]>('/api/dashboard/channel-breakdown', { params: { location } })
+      .then((r) => r.data),
+  seasonalPattern: (location?: string) =>
+    api
+      .get<SeasonalPoint[]>('/api/dashboard/seasonal-pattern', { params: { location } })
+      .then((r) => r.data),
+};
+
+export const locationsApi = {
+  compare: (trainMissing = true) =>
+    api
+      .get<LocationCompareResponse>('/api/locations/compare', { params: { train_missing: trainMissing } })
+      .then((r) => r.data),
 };

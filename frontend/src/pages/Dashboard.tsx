@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import AppLayout from '../components/AppLayout';
 import KpiCard from '../components/KpiCard';
+import LocationSelector from '../components/LocationSelector';
 import { useLanguage } from '../context/LanguageContext';
 import {
   dashboardApi,
@@ -32,30 +33,34 @@ export default function Dashboard() {
   const [seasonal, setSeasonal] = useState<SeasonalPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [location, setLocation] = useState<string | undefined>(undefined);
+  const [locationReady, setLocationReady] = useState(false);
 
   useEffect(() => {
+    if (!locationReady) return;
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
         const [s, series, ch, sp] = await Promise.all([
-          dashboardApi.summary(),
-          dashboardApi.demandSeries(90),
-          dashboardApi.channelBreakdown(),
-          dashboardApi.seasonalPattern(),
+          dashboardApi.summary(location),
+          dashboardApi.demandSeries(90, location),
+          dashboardApi.channelBreakdown(location),
+          dashboardApi.seasonalPattern(location),
         ]);
         if (cancelled) return;
         setSummary(s);
         setChannels(ch);
         setSeasonal(sp);
+        setHasForecast(false);
 
         const actualPoints = series.map((p) => ({ date: p.date, actual: p.demand }));
         let combined: { date: string; actual?: number; forecast?: number }[] = actualPoints;
 
         if (s.total_records > 0 && s.best_model) {
           try {
-            const fc = await mlApi.forecast(s.best_model, 30);
+            const fc = await mlApi.forecast(s.best_model, 30, location);
             const forecastPoints = fc.points.map((p) => ({ date: p.date, forecast: p.predicted }));
             combined = [...actualPoints, ...forecastPoints];
             if (!cancelled) setHasForecast(true);
@@ -75,11 +80,15 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [locationReady, location]);
 
-  if (loading) {
+  const headerExtra = (
+    <LocationSelector value={location} onChange={setLocation} onReady={() => setLocationReady(true)} />
+  );
+
+  if (!locationReady || loading) {
     return (
-      <AppLayout title={t('navDashboard')}>
+      <AppLayout title={t('navDashboard')} headerExtra={headerExtra}>
         <div style={{ padding: 40, color: 'var(--c-text-faint)' }}>{t('loading')}</div>
       </AppLayout>
     );
@@ -87,7 +96,7 @@ export default function Dashboard() {
 
   if (error || !summary || summary.total_records === 0) {
     return (
-      <AppLayout title={t('navDashboard')}>
+      <AppLayout title={t('navDashboard')} headerExtra={headerExtra}>
         <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--c-text-faint)' }}>
           {error || t('noData')}
         </div>
@@ -98,7 +107,7 @@ export default function Dashboard() {
   const maxChannel = Math.max(...channels.map((c) => c.total_demand), 1);
 
   return (
-    <AppLayout title={t('navDashboard')}>
+    <AppLayout title={t('navDashboard')} headerExtra={headerExtra}>
       <div className="grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 15, marginBottom: 16 }}>
         <KpiCard
           icon={<span style={{ fontSize: 16 }}>📦</span>}

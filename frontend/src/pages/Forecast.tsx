@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, Area } from 'recharts';
 import AppLayout from '../components/AppLayout';
+import LocationSelector from '../components/LocationSelector';
 import { useLanguage } from '../context/LanguageContext';
 import {
   dataApi,
@@ -30,9 +31,12 @@ export default function Forecast() {
   const { t, lang } = useLanguage();
   const [searchParams] = useSearchParams();
   const preselectedModel = searchParams.get('model');
+  const preselectedLocation = searchParams.get('location') ?? undefined;
 
   const [model, setModel] = useState(preselectedModel && MODEL_OPTIONS.some((m) => m.value === preselectedModel) ? preselectedModel : 'xgboost');
   const [horizon, setHorizon] = useState(30);
+  const [location, setLocation] = useState<string | undefined>(preselectedLocation);
+  const [locationReady, setLocationReady] = useState(false);
   const [stage, setStage] = useState<Stage>('idle');
   const [forecastRes, setForecastRes] = useState<ForecastResponse | null>(null);
   const [testRes, setTestRes] = useState<TestPredictionsResponse | null>(null);
@@ -40,13 +44,15 @@ export default function Forecast() {
   const [testChartData, setTestChartData] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Auto-run once if we arrived from Analytics with a model preselected.
+  // Auto-run once if we arrived from Analytics with a model preselected —
+  // but only after we know the resolved location, so training filters by
+  // the right series instead of accidentally combining every location's data.
   useEffect(() => {
-    if (preselectedModel) {
+    if (preselectedModel && locationReady) {
       runPipeline();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [locationReady]);
 
   const runPipeline = async () => {
     setError(null);
@@ -54,7 +60,7 @@ export default function Forecast() {
     setTestRes(null);
     try {
       setStage('validate');
-      const quality: DataQualitySummary = await dataApi.quality();
+      const quality: DataQualitySummary = await dataApi.quality(location);
       if (!quality.ready_for_training) {
         setError(quality.reason || (lang === 'th' ? 'ข้อมูลไม่พร้อมสำหรับเทรนโมเดล' : 'Data not ready for training'));
         setStage('idle');
@@ -62,10 +68,13 @@ export default function Forecast() {
       }
 
       setStage('train');
-      await mlApi.train([model], horizon);
+      await mlApi.train([model], horizon, location);
 
       setStage('forecast');
-      const [fc, tp] = await Promise.all([mlApi.forecast(model, horizon), mlApi.testPredictions(model)]);
+      const [fc, tp] = await Promise.all([
+        mlApi.forecast(model, horizon, location),
+        mlApi.testPredictions(model, location),
+      ]);
       setForecastRes(fc);
       setTestRes(tp);
       setFutureChartData(fc.points.map((p) => ({ date: p.date, predicted: p.predicted, lower: p.lower, upper: p.upper })));
@@ -90,7 +99,10 @@ export default function Forecast() {
     : '';
 
   return (
-    <AppLayout title={t('navForecast')}>
+    <AppLayout
+      title={t('navForecast')}
+      headerExtra={<LocationSelector value={location} onChange={setLocation} onReady={() => setLocationReady(true)} />}
+    >
       <div className="grid-side" style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 15, alignItems: 'start' }}>
         <div className="card" style={{ padding: 22 }}>
           <div className="font-heading" style={{ fontWeight: 600, fontSize: 16, marginBottom: 18 }}>{t('configTitle')}</div>
@@ -159,7 +171,7 @@ export default function Forecast() {
             </div>
           </div>
 
-          <button className="btn-primary" style={{ width: '100%', fontSize: 14, padding: 13 }} disabled={busy} onClick={runPipeline}>
+          <button className="btn-primary" style={{ width: '100%', fontSize: 14, padding: 13 }} disabled={busy || !locationReady} onClick={runPipeline}>
             {busy ? stageMessage : t('trainModel')}
           </button>
           {busy && (
@@ -253,7 +265,7 @@ export default function Forecast() {
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2 }}>
                   <div className="font-heading" style={{ fontWeight: 600, fontSize: 15 }}>{t('futureChartTitle')}</div>
                   <a
-                    href={mlApi.forecastExportUrl(forecastRes.model_type, forecastRes.horizon_days)}
+                    href={mlApi.forecastExportUrl(forecastRes.model_type, forecastRes.horizon_days, location)}
                     style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-primary)', textDecoration: 'none' }}
                   >
                     {t('exportForecastBtn')}

@@ -1,6 +1,7 @@
 import csv
 import datetime as dt
 import io
+from typing import Optional
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -34,8 +35,10 @@ MODEL_LABELS = {
 }
 
 
-def _train_one(db: Session, user: User, model_type: str, horizon_days: int) -> tuple[TrainingRun, dict]:
-    df = load_records_df(db, user.id)
+def _train_one(
+    db: Session, user: User, model_type: str, horizon_days: int, location: Optional[str] = None
+) -> tuple[TrainingRun, dict]:
+    df = load_records_df(db, user.id, location=location)
     if df.empty:
         raise HTTPException(status_code=400, detail="ยังไม่มีข้อมูล กรุณาอัปโหลดหรือโหลดข้อมูลตัวอย่างก่อน")
 
@@ -46,6 +49,7 @@ def _train_one(db: Session, user: User, model_type: str, horizon_days: int) -> t
 
     set_trained(
         user.id,
+        location,
         model_type,
         {
             "model": result["model"],
@@ -61,6 +65,7 @@ def _train_one(db: Session, user: User, model_type: str, horizon_days: int) -> t
     run = TrainingRun(
         owner_id=user.id,
         model_type=model_type,
+        location=location,
         horizon_days=horizon_days,
         train_size=result["train_size"],
         test_size=result["test_size"],
@@ -97,10 +102,14 @@ def _best_model_reason(best: TrainingRun, runs: list[TrainingRun]) -> str:
 @router.post("/train", response_model=TrainResponse)
 def train(
     payload: TrainRequest,
+    location: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    runs = [_train_one(db, current_user, model_type, payload.horizon_days)[0] for model_type in payload.models]
+    runs = [
+        _train_one(db, current_user, model_type, payload.horizon_days, location=location)[0]
+        for model_type in payload.models
+    ]
     best = min(runs, key=rank_key)
     return TrainResponse(
         results=[ModelMetrics.model_validate(r) for r in runs],
@@ -109,18 +118,31 @@ def train(
     )
 
 
-@router.get("/compare", response_model=TrainResponse)
-def compare(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def _latest_runs_for_location(db: Session, owner_id: int, location: Optional[str]) -> list[TrainingRun]:
     latest_runs = []
     for model_type in MODEL_LABELS:
         run = (
             db.query(TrainingRun)
-            .filter(TrainingRun.owner_id == current_user.id, TrainingRun.model_type == model_type)
+            .filter(
+                TrainingRun.owner_id == owner_id,
+                TrainingRun.model_type == model_type,
+                TrainingRun.location == location,
+            )
             .order_by(TrainingRun.trained_at.desc())
             .first()
         )
         if run:
             latest_runs.append(run)
+    return latest_runs
+
+
+@router.get("/compare", response_model=TrainResponse)
+def compare(
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    latest_runs = _latest_runs_for_location(db, current_user.id, location)
 
     if not latest_runs:
         raise HTTPException(status_code=404, detail="ยังไม่มีการเทรนโมเดล")
@@ -155,21 +177,26 @@ def _forecast_summary(points: list[dict]) -> ForecastSummary:
 def forecast(
     model: str = Query(default="xgboost"),
     horizon_days: int = Query(default=30, ge=1, le=365),
+    location: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if model not in MODEL_LABELS:
         raise HTTPException(status_code=400, detail=f"ไม่รู้จักโมเดล: {model}")
 
-    cached = get_trained(current_user.id, model)
+    cached = get_trained(current_user.id, location, model)
     latest_run = None
     if cached is None:
-        latest_run, _ = _train_one(db, current_user, model, horizon_days)
-        cached = get_trained(current_user.id, model)
+        latest_run, _ = _train_one(db, current_user, model, horizon_days, location=location)
+        cached = get_trained(current_user.id, location, model)
     else:
         latest_run = (
             db.query(TrainingRun)
-            .filter(TrainingRun.owner_id == current_user.id, TrainingRun.model_type == model)
+            .filter(
+                TrainingRun.owner_id == current_user.id,
+                TrainingRun.model_type == model,
+                TrainingRun.location == location,
+            )
             .order_by(TrainingRun.trained_at.desc())
             .first()
         )
@@ -200,6 +227,7 @@ def forecast(
 @router.get("/test-predictions", response_model=TestPredictionsResponse)
 def test_predictions(
     model: str = Query(default="xgboost"),
+    location: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -210,10 +238,10 @@ def test_predictions(
     if model not in MODEL_LABELS:
         raise HTTPException(status_code=400, detail=f"ไม่รู้จักโมเดล: {model}")
 
-    cached = get_trained(current_user.id, model)
+    cached = get_trained(current_user.id, location, model)
     if cached is None:
-        _train_one(db, current_user, model, 30)
-        cached = get_trained(current_user.id, model)
+        _train_one(db, current_user, model, 30, location=location)
+        cached = get_trained(current_user.id, location, model)
 
     return TestPredictionsResponse(
         model_type=model,
@@ -227,15 +255,16 @@ def test_predictions(
 def export_forecast(
     model: str = Query(default="xgboost"),
     horizon_days: int = Query(default=30, ge=1, le=365),
+    location: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    resp = forecast(model=model, horizon_days=horizon_days, db=db, current_user=current_user)
+    resp = forecast(model=model, horizon_days=horizon_days, location=location, db=db, current_user=current_user)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["date", "forecast_demand", "lower_bound", "upper_bound", "model", "mape"])
+    writer.writerow(["date", "forecast_demand", "lower_bound", "upper_bound", "model", "location", "mape"])
     for p in resp.points:
-        writer.writerow([p.date, p.predicted, p.lower, p.upper, resp.model_type, resp.mape])
+        writer.writerow([p.date, p.predicted, p.lower, p.upper, resp.model_type, location or "", resp.mape])
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),
@@ -245,13 +274,17 @@ def export_forecast(
 
 
 @router.get("/compare/export")
-def export_compare(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    resp = compare(db=db, current_user=current_user)
+def export_compare(
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    resp = compare(location=location, db=db, current_user=current_user)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["model", "mae", "rmse", "mape", "r2", "train_size", "test_size", "trained_at"])
+    writer.writerow(["model", "location", "mae", "rmse", "mape", "r2", "train_size", "test_size", "trained_at"])
     for m in resp.results:
-        writer.writerow([m.model_type, m.mae, m.rmse, m.mape, m.r2, m.train_size, m.test_size, m.trained_at])
+        writer.writerow([m.model_type, location or "", m.mae, m.rmse, m.mape, m.r2, m.train_size, m.test_size, m.trained_at])
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),

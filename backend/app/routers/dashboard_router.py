@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pandas as pd
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -15,14 +17,18 @@ MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "
 MODEL_TYPES = ["random_forest", "xgboost", "lightgbm"]
 
 
-def _latest_runs(db: Session, owner_id: int) -> list[TrainingRun]:
+def _latest_runs(db: Session, owner_id: int, location: Optional[str]) -> list[TrainingRun]:
     """Latest training run per model type — the same candidate set used by
     /api/ml/compare, so the "best model" here always agrees with that page."""
     runs = []
     for model_type in MODEL_TYPES:
         run = (
             db.query(TrainingRun)
-            .filter(TrainingRun.owner_id == owner_id, TrainingRun.model_type == model_type)
+            .filter(
+                TrainingRun.owner_id == owner_id,
+                TrainingRun.model_type == model_type,
+                TrainingRun.location == location,
+            )
             .order_by(TrainingRun.trained_at.desc())
             .first()
         )
@@ -32,8 +38,12 @@ def _latest_runs(db: Session, owner_id: int) -> list[TrainingRun]:
 
 
 @router.get("/summary")
-def summary(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    df = load_records_df(db, current_user.id)
+def summary(
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    df = load_records_df(db, current_user.id, location=location)
     if df.empty:
         return {
             "total_records": 0,
@@ -72,7 +82,7 @@ def summary(db: Session = Depends(get_db), current_user: User = Depends(get_curr
     except Exception:
         pass
 
-    runs = _latest_runs(db, current_user.id)
+    runs = _latest_runs(db, current_user.id, location)
     best_run = min(runs, key=rank_key) if runs else None
 
     return {
@@ -95,10 +105,11 @@ def summary(db: Session = Depends(get_db), current_user: User = Depends(get_curr
 @router.get("/demand-series")
 def demand_series(
     days: int = Query(default=180, le=3650),
+    location: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    df = load_records_df(db, current_user.id)
+    df = load_records_df(db, current_user.id, location=location)
     if df.empty:
         return []
     df["date"] = pd.to_datetime(df["date"])
@@ -107,8 +118,12 @@ def demand_series(
 
 
 @router.get("/channel-breakdown")
-def channel_breakdown(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    df = load_records_df(db, current_user.id)
+def channel_breakdown(
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    df = load_records_df(db, current_user.id, location=location)
     if df.empty:
         return []
     grouped = (
@@ -125,8 +140,12 @@ def channel_breakdown(db: Session = Depends(get_db), current_user: User = Depend
 
 
 @router.get("/seasonal-pattern")
-def seasonal_pattern(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    df = load_records_df(db, current_user.id)
+def seasonal_pattern(
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    df = load_records_df(db, current_user.id, location=location)
     if df.empty:
         return []
     df["date"] = pd.to_datetime(df["date"])

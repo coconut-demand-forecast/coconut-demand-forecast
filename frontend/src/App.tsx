@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import DataPage from './pages/DataPage';
 import Forecast from './pages/Forecast';
 import Analytics from './pages/Analytics';
+import LocationCompare from './pages/LocationCompare';
 
 function LoginRoute() {
   const { user } = useAuth();
@@ -50,6 +51,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Analytics />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/locations"
+              element={
+                <ProtectedRoute>
+                  <LocationCompare />
                 </ProtectedRoute>
               }
             />

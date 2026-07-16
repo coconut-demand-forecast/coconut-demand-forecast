@@ -1,6 +1,7 @@
 import csv
 import io
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -14,7 +15,7 @@ from app.database import get_db
 from app.ml.cache import clear_user
 from app.ml.pipeline import MIN_RAW_ROWS, MIN_USABLE_ROWS, WARMUP_DAYS, build_features
 from app.models import DemandRecord, User
-from app.records import load_records_df
+from app.records import list_locations, load_records_df
 from app.schemas import DataQualitySummary, DemandRecordOut, UploadResult
 
 router = APIRouter(prefix="/api/data", tags=["data"])
@@ -27,6 +28,7 @@ def _save_dataframe(df, owner_id: int, db: Session) -> int:
         DemandRecord(
             owner_id=owner_id,
             date=row.date,
+            location=row.location if "location" in df.columns else None,
             demand=row.demand,
             avg_price=row.avg_price if "avg_price" in df.columns else None,
             cost_price=row.cost_price if "cost_price" in df.columns else None,
@@ -109,24 +111,31 @@ def load_sample(
 def list_records(
     limit: int = Query(default=50, le=500),
     offset: int = 0,
+    location: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = (
-        db.query(DemandRecord)
-        .filter(DemandRecord.owner_id == current_user.id)
-        .order_by(DemandRecord.date.desc())
-        .offset(offset)
-        .limit(limit)
-    )
+    q = db.query(DemandRecord).filter(DemandRecord.owner_id == current_user.id)
+    if location is not None:
+        q = q.filter(DemandRecord.location == location)
+    q = q.order_by(DemandRecord.date.desc()).offset(offset).limit(limit)
     return q.all()
+
+
+@router.get("/locations")
+def get_locations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return {"locations": list_locations(db, current_user.id)}
 
 
 @router.get("/summary")
 def data_summary(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     q = db.query(DemandRecord).filter(DemandRecord.owner_id == current_user.id)
+    if location is not None:
+        q = q.filter(DemandRecord.location == location)
     count = q.count()
     if count == 0:
         return {"count": 0, "date_from": None, "date_to": None}
@@ -136,8 +145,12 @@ def data_summary(
 
 
 @router.get("/quality", response_model=DataQualitySummary)
-def data_quality(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    df = load_records_df(db, current_user.id)
+def data_quality(
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    df = load_records_df(db, current_user.id, location=location)
     count = len(df)
     if count == 0:
         return DataQualitySummary(
@@ -154,7 +167,10 @@ def data_quality(db: Session = Depends(get_db), current_user: User = Depends(get
     optional_cols = ["avg_price", "cost_price", "production_volume", "avg_temp", "rainfall", "tourists"]
     missing_value_rows = int(df[optional_cols].isna().any(axis=1).sum())
 
-    duplicate_date_rows = int(df["date"].duplicated().sum())
+    # With multi-location data the same date legitimately repeats once per
+    # location, so only flag it as a duplicate within the same location.
+    dedup_subset = ["date", "location"] if location is None and "location" in df.columns else ["date"]
+    duplicate_date_rows = int(df.duplicated(subset=dedup_subset).sum())
 
     q1, q3 = df["demand"].quantile(0.25), df["demand"].quantile(0.75)
     iqr = q3 - q1
@@ -201,19 +217,20 @@ def clear_records(
 
 @router.get("/export")
 def export_csv(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    location: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    records = (
-        db.query(DemandRecord)
-        .filter(DemandRecord.owner_id == current_user.id)
-        .order_by(DemandRecord.date.asc())
-        .all()
-    )
+    q = db.query(DemandRecord).filter(DemandRecord.owner_id == current_user.id)
+    if location is not None:
+        q = q.filter(DemandRecord.location == location)
+    records = q.order_by(DemandRecord.date.asc()).all()
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
         [
             "date",
+            "location",
             "demand",
             "avg_price",
             "cost_price",
@@ -232,6 +249,7 @@ def export_csv(
         writer.writerow(
             [
                 r.date,
+                r.location,
                 r.demand,
                 r.avg_price,
                 r.cost_price,

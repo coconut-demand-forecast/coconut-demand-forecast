@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '../components/AppLayout';
+import LocationSelector from '../components/LocationSelector';
 import { useLanguage } from '../context/LanguageContext';
 import { mlApi, type ModelMetrics } from '../api';
 
@@ -40,12 +41,14 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [training, setTraining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [location, setLocation] = useState<string | undefined>(undefined);
+  const [locationReady, setLocationReady] = useState(false);
 
-  const load = async () => {
+  const load = async (loc: string | undefined) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await mlApi.compare();
+      const res = await mlApi.compare(loc);
       setResults(res.results);
       setBestModel(res.best_model);
       setBestModelReason(res.best_model_reason);
@@ -62,16 +65,16 @@ export default function Analytics() {
   };
 
   useEffect(() => {
-    load();
+    if (locationReady) load(location);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [locationReady, location]);
 
   const trainAll = async () => {
     setTraining(true);
     setError(null);
     try {
-      await mlApi.train(['random_forest', 'xgboost', 'lightgbm'], 30);
-      await load();
+      await mlApi.train(['random_forest', 'xgboost', 'lightgbm'], 30, location);
+      await load(location);
     } catch (e: any) {
       setError(e?.response?.data?.detail || (lang === 'th' ? 'เทรนโมเดลไม่สำเร็จ' : 'Training failed'));
     } finally {
@@ -84,9 +87,13 @@ export default function Analytics() {
   const bestResult = sorted[0];
   const features = bestResult ? Object.entries(bestResult.feature_importance).slice(0, 6) : [];
 
-  if (loading) {
+  const headerExtra = (
+    <LocationSelector value={location} onChange={setLocation} onReady={() => setLocationReady(true)} />
+  );
+
+  if (!locationReady || loading) {
     return (
-      <AppLayout title={t('navAnalytics')}>
+      <AppLayout title={t('navAnalytics')} headerExtra={headerExtra}>
         <div style={{ padding: 40, color: 'var(--c-text-faint)' }}>{t('loading')}</div>
       </AppLayout>
     );
@@ -94,7 +101,7 @@ export default function Analytics() {
 
   if (results.length === 0) {
     return (
-      <AppLayout title={t('navAnalytics')}>
+      <AppLayout title={t('navAnalytics')} headerExtra={headerExtra}>
         <div className="card" style={{ padding: 40, textAlign: 'center' }}>
           <p style={{ color: 'var(--c-text-faint)', marginBottom: 16 }}>
             {lang === 'th' ? 'ยังไม่มีการเทรนโมเดล กดปุ่มด้านล่างเพื่อเทรนและเปรียบเทียบทั้ง 3 โมเดล' : 'No trained models yet. Click below to train and compare all 3 models.'}
@@ -109,7 +116,7 @@ export default function Analytics() {
   }
 
   return (
-    <AppLayout title={t('navAnalytics')}>
+    <AppLayout title={t('navAnalytics')} headerExtra={headerExtra}>
       <div className="card" style={{ padding: '20px 22px', marginBottom: 15 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
           <div>
@@ -168,7 +175,9 @@ export default function Analytics() {
                   </td>
                   <td style={{ padding: '12px 14px', textAlign: 'center' }}>
                     <button
-                      onClick={() => navigate(`/forecast?model=${m.model_type}`)}
+                      onClick={() =>
+                        navigate(`/forecast?model=${m.model_type}${location ? `&location=${encodeURIComponent(location)}` : ''}`)
+                      }
                       style={{ border: '1px solid var(--c-border)', background: '#fff', color: 'var(--c-primary-dark)', fontSize: 11.5, fontWeight: 600, padding: '6px 11px', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}
                     >
                       {t('useThisModel')}
