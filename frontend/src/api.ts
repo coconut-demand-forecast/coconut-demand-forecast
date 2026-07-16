@@ -2,6 +2,10 @@ import axios from 'axios';
 
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+/** Sentinel location value meaning "combine every location into one
+ * national series" — matches the backend's ALL_LOCATIONS constant. */
+export const ALL_LOCATIONS = '__all__';
+
 export const api = axios.create({ baseURL: API_URL });
 
 api.interceptors.request.use((config) => {

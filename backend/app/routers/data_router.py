@@ -15,7 +15,7 @@ from app.database import get_db
 from app.ml.cache import clear_user
 from app.ml.pipeline import MIN_RAW_ROWS, MIN_USABLE_ROWS, WARMUP_DAYS, build_features
 from app.models import DemandRecord, User
-from app.records import list_locations, load_records_df
+from app.records import ALL_LOCATIONS, list_locations, load_records_df
 from app.schemas import DataQualitySummary, DemandRecordOut, UploadResult
 
 router = APIRouter(prefix="/api/data", tags=["data"])
@@ -116,7 +116,7 @@ def list_records(
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(DemandRecord).filter(DemandRecord.owner_id == current_user.id)
-    if location is not None:
+    if location is not None and location != ALL_LOCATIONS:
         q = q.filter(DemandRecord.location == location)
     q = q.order_by(DemandRecord.date.desc()).offset(offset).limit(limit)
     return q.all()
@@ -134,7 +134,7 @@ def data_summary(
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(DemandRecord).filter(DemandRecord.owner_id == current_user.id)
-    if location is not None:
+    if location is not None and location != ALL_LOCATIONS:
         q = q.filter(DemandRecord.location == location)
     count = q.count()
     if count == 0:
@@ -222,7 +222,7 @@ def export_csv(
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(DemandRecord).filter(DemandRecord.owner_id == current_user.id)
-    if location is not None:
+    if location is not None and location != ALL_LOCATIONS:
         q = q.filter(DemandRecord.location == location)
     records = q.order_by(DemandRecord.date.asc()).all()
     buf = io.StringIO()

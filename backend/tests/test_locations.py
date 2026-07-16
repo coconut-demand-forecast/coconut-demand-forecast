@@ -58,6 +58,44 @@ def test_train_is_scoped_to_selected_location(client, auth_headers):
     assert body["results"][0]["train_size"] + body["results"][0]["test_size"] == 50
 
 
+def test_all_locations_aggregates_demand_correctly(client, auth_headers):
+    client.post(
+        "/api/data/upload",
+        headers=auth_headers,
+        files={"file": ("data.csv", io.BytesIO(_make_multi_location_csv(80)), "text/csv")},
+    )
+    resp = client.get("/api/data/quality", headers=auth_headers, params={"location": "__all__"})
+    assert resp.status_code == 200
+    body = resp.json()
+    # 80 unique dates in the aggregate (not 160 raw rows), demand=2000+1500=3500/day
+    assert body["count"] == 80
+    assert body["duplicate_date_rows"] == 0
+
+    records_resp = client.get(
+        "/api/data/records", headers=auth_headers, params={"location": "__all__", "limit": 1}
+    )
+    # /records is raw (not aggregated) by design — still returns per-location rows
+    assert records_resp.status_code == 200
+
+
+def test_train_on_all_locations_uses_aggregated_series(client, auth_headers):
+    client.post(
+        "/api/data/upload",
+        headers=auth_headers,
+        files={"file": ("data.csv", io.BytesIO(_make_multi_location_csv(80)), "text/csv")},
+    )
+    resp = client.post(
+        "/api/ml/train",
+        headers=auth_headers,
+        params={"location": "__all__"},
+        json={"models": ["random_forest"], "horizon_days": 7},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # 80 days - 30 warmup = 50 usable rows from the AGGREGATED (one-per-date) series
+    assert body["results"][0]["train_size"] + body["results"][0]["test_size"] == 50
+
+
 def test_forecast_without_location_on_multi_location_data_still_responds(client, auth_headers):
     """No location filter combines all locations' rows — not ideal
     methodologically, but must not crash; the frontend always picks a

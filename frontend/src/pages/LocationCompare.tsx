@@ -5,7 +5,7 @@ import AppLayout from '../components/AppLayout';
 import Spinner from '../components/Spinner';
 import { useLanguage } from '../context/LanguageContext';
 import { useToast } from '../context/ToastContext';
-import { locationsApi, type LocationCompareItem } from '../api';
+import { ALL_LOCATIONS, locationsApi, type LocationCompareItem } from '../api';
 
 const MODEL_NAMES: Record<string, string> = {
   random_forest: 'Random Forest',
@@ -63,6 +63,7 @@ export default function LocationCompare() {
   }
 
   const bestMapeItem = [...items].filter((i) => i.best_mape !== null).sort((a, b) => (a.best_mape ?? 0) - (b.best_mape ?? 0))[0];
+  const formatLocation = (loc: string) => (loc === ALL_LOCATIONS ? t('locationAll') : loc);
 
   return (
     <AppLayout title={t('navLocationCompare')}>
@@ -91,7 +92,7 @@ export default function LocationCompare() {
                     background: it.location === bestMapeItem?.location ? '#f7fbf9' : 'transparent',
                   }}
                 >
-                  <td style={{ padding: '12px 14px', fontWeight: 600, color: 'var(--c-text-soft)' }}>{it.location}</td>
+                  <td style={{ padding: '12px 14px', fontWeight: 600, color: 'var(--c-text-soft)' }}>{formatLocation(it.location)}</td>
                   <td style={{ padding: '12px 14px', textAlign: 'right', color: 'var(--c-text-muted)' }}>{it.record_count.toLocaleString()}</td>
                   <td style={{ padding: '12px 14px', textAlign: 'right', color: 'var(--c-text-muted)' }}>{it.avg_demand.toLocaleString()}</td>
                   <td style={{ padding: '12px 14px', color: 'var(--c-text-soft)' }}>{it.best_model ? MODEL_NAMES[it.best_model] ?? it.best_model : '-'}</td>
@@ -120,9 +121,9 @@ export default function LocationCompare() {
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={items}>
             <CartesianGrid stroke="#eef4f0" vertical={false} />
-            <XAxis dataKey="location" tick={{ fontSize: 11, fill: '#8fa79b' }} axisLine={false} tickLine={false} />
+            <XAxis dataKey="location" tickFormatter={formatLocation} tick={{ fontSize: 11, fill: '#8fa79b' }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 10.5, fill: '#a9bcb2' }} width={50} />
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={(label) => formatLocation(String(label))} />
             <Bar dataKey="avg_demand" radius={[6, 6, 3, 3]} fill="#2fa76d" />
           </BarChart>
         </ResponsiveContainer>

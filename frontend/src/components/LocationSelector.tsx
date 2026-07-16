@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { dataApi } from '../api';
+import { ALL_LOCATIONS, dataApi } from '../api';
 import { useLanguage } from '../context/LanguageContext';
 
 /**
@@ -26,7 +26,9 @@ export default function LocationSelector({
       .locations()
       .then((locs) => {
         setLocations(locs);
-        const resolved = locs.length > 0 ? locs[0] : undefined;
+        // With 2+ real locations, default to the combined "All" view;
+        // with just one, "All" would be identical so skip straight to it.
+        const resolved = locs.length > 1 ? ALL_LOCATIONS : locs.length === 1 ? locs[0] : undefined;
         if (resolved && !value) onChange(resolved);
         onReady?.(resolved);
       })
@@ -40,7 +42,7 @@ export default function LocationSelector({
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ fontSize: 12, color: 'var(--c-text-muted)', fontWeight: 600 }}>{t('locationLabel')}</span>
       <select
-        value={value ?? locations[0]}
+        value={value ?? (locations.length > 1 ? ALL_LOCATIONS : locations[0])}
         onChange={(e) => onChange(e.target.value)}
         style={{
           border: '1px solid var(--c-border)',
@@ -53,6 +55,7 @@ export default function LocationSelector({
           cursor: 'pointer',
         }}
       >
+        {locations.length > 1 && <option value={ALL_LOCATIONS}>{t('locationAll')}</option>}
         {locations.map((loc) => (
           <option key={loc} value={loc}>
             {loc}
