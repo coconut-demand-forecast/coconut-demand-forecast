@@ -77,7 +77,9 @@ export const dict = {
     colUpper: 'ขอบบน',
     h7: '7 วัน',
     h30: '30 วัน',
+    h60: '60 วัน',
     h90: '90 วัน',
+    h120: '120 วัน',
     h180: '180 วัน',
 
     // analytics
@@ -180,6 +182,15 @@ export const dict = {
     lblLastTrained: 'เทรนล่าสุดเมื่อ',
     lblLastHorizon: 'ระยะเวลาพยากรณ์ล่าสุด',
     noModelYet: 'ยังไม่มีการเทรนโมเดล ไปที่หน้า "พยากรณ์" เพื่อเริ่มเทรน',
+    accuracyLabel: 'ความแม่นยำโดยประมาณ',
+    techDetails: 'รายละเอียดทางเทคนิค',
+    monthlyTitle: 'ยอดพยากรณ์รายเดือน',
+    monthlySub: 'เลือกเดือนที่ต้องการดูยอดพยากรณ์ล่วงหน้า',
+    monthlySelectLabel: 'เลือกเดือน',
+    monthlyBtn: 'ดูยอดพยากรณ์',
+    monthlyTotal: 'ยอดรวมทั้งเดือน',
+    monthlyAvgDay: 'เฉลี่ยต่อวัน',
+    monthlyNoModel: 'ยังไม่มีโมเดลที่เทรนไว้ ไปที่หน้า "พยากรณ์" เพื่อเริ่มเทรนก่อน',
   },
   en: {
     brand: 'CoconutDSS',
@@ -254,7 +265,9 @@ export const dict = {
     colUpper: 'Upper',
     h7: '7 days',
     h30: '30 days',
+    h60: '60 days',
     h90: '90 days',
+    h120: '120 days',
     h180: '180 days',
 
     compareTitle: 'Model Performance Comparison',
@@ -355,6 +368,15 @@ export const dict = {
     lblLastTrained: 'Last trained',
     lblLastHorizon: 'Last forecast horizon',
     noModelYet: 'No model trained yet. Go to the "Forecasting" page to train one.',
+    accuracyLabel: 'Estimated accuracy',
+    techDetails: 'Technical details',
+    monthlyTitle: 'Monthly Forecast',
+    monthlySub: 'Pick a future month to see the forecasted total',
+    monthlySelectLabel: 'Select month',
+    monthlyBtn: 'View Forecast',
+    monthlyTotal: 'Total for the month',
+    monthlyAvgDay: 'Average per day',
+    monthlyNoModel: 'No model trained yet. Go to the "Forecasting" page to train one first.',
   },
 } as const;
 
