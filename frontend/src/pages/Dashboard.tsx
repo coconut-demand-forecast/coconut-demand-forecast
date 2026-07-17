@@ -73,6 +73,19 @@ export default function Dashboard() {
   const [location, setLocation] = useState<string | undefined>(undefined);
   const [locationReady, setLocationReady] = useState(false);
   const [forecastAnchor, setForecastAnchor] = useState<Date | null>(null);
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
+
+  const runExport = async (key: string, fn: () => Promise<void>) => {
+    setExportBusy(key);
+    try {
+      await fn();
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || (lang === 'th' ? 'ส่งออกไม่สำเร็จ' : 'Export failed');
+      showError(msg);
+    } finally {
+      setExportBusy(null);
+    }
+  };
 
   const monthOptions = useMemo(() => buildMonthOptions(lang, forecastAnchor ?? new Date()), [lang, forecastAnchor]);
   const [selectedMonth, setSelectedMonth] = useState<string>('');
@@ -472,12 +485,16 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </div>
-                <a
-                  href={mlApi.forecastReportUrl(summary.best_model, chartHorizon, location, selectedMonth)}
-                  style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-primary)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                <button
+                  onClick={() =>
+                    runExport('monthPdf', () => mlApi.downloadForecastReport(summary.best_model!, chartHorizon, location, selectedMonth))
+                  }
+                  disabled={exportBusy === 'monthPdf'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--c-primary)', whiteSpace: 'nowrap' }}
                 >
+                  {exportBusy === 'monthPdf' && <Spinner size={11} color="var(--c-primary)" />}
                   {t('exportPdfMonthBtn')}
-                </a>
+                </button>
               </div>
             )}
           </>
@@ -488,24 +505,24 @@ export default function Dashboard() {
         <div className="font-heading" style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>{t('exportTitle')}</div>
         <div style={{ fontSize: 12, color: 'var(--c-text-faint)', marginBottom: 16 }}>{t('exportReportSub')}</div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <a
-            href={dataApi.exportUrl(location)}
-            target="_blank"
-            rel="noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--c-border)', cursor: 'pointer', background: '#fff', color: 'var(--c-primary-dark)', fontWeight: 600, fontSize: 13, padding: '10px 18px', borderRadius: 10, textDecoration: 'none' }}
+          <button
+            onClick={() => runExport('csv', () => dataApi.exportCsv(location))}
+            disabled={exportBusy === 'csv'}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--c-border)', cursor: 'pointer', background: '#fff', color: 'var(--c-primary-dark)', fontWeight: 600, fontSize: 13, padding: '10px 18px', borderRadius: 10 }}
           >
+            {exportBusy === 'csv' && <Spinner size={13} color="var(--c-primary-dark)" />}
             {t('exportCsv')}
-          </a>
+          </button>
           {summary.best_model ? (
-            <a
-              href={mlApi.forecastReportUrl(summary.best_model, chartHorizon, location)}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              onClick={() => runExport('pdf', () => mlApi.downloadForecastReport(summary.best_model!, chartHorizon, location))}
+              disabled={exportBusy === 'pdf'}
               className="btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '10px 18px', textDecoration: 'none' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '10px 18px' }}
             >
+              {exportBusy === 'pdf' && <Spinner size={13} color="#fff" />}
               {t('exportPdfBtn')}
-            </a>
+            </button>
           ) : (
             <span style={{ fontSize: 12, color: 'var(--c-text-faint)', alignSelf: 'center' }}>{t('exportNoModel')}</span>
           )}

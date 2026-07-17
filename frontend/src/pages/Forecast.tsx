@@ -348,12 +348,16 @@ export default function Forecast() {
                             </td>
                             <td style={{ padding: '12px 14px', textAlign: 'center' }}>
                               {fc && (
-                                <a
-                                  href={mlApi.forecastExportUrl(m, fc.horizon_days, location)}
-                                  style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--c-primary)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                                <button
+                                  onClick={() =>
+                                    mlApi.downloadForecastExport(m, fc.horizon_days, location).catch((e: any) => {
+                                      showError(e?.response?.data?.detail || (lang === 'th' ? 'ส่งออกไม่สำเร็จ' : 'Export failed'));
+                                    })
+                                  }
+                                  style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, color: 'var(--c-primary)', whiteSpace: 'nowrap' }}
                                 >
                                   {t('exportForecastBtn')}
-                                </a>
+                                </button>
                               )}
                             </td>
                           </tr>

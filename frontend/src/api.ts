@@ -17,6 +17,38 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/** Authenticated file download. A plain `<a href>` to a protected endpoint
+ * can't carry the JWT (browser navigations don't send custom headers), so
+ * every export/report link must go through this instead of a raw URL. */
+async function downloadAuthed(url: string, params: Record<string, unknown>, fallbackFilename: string) {
+  try {
+    const res = await api.get(url, { params, responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] as string | undefined;
+    const match = disposition?.match(/filename="?([^";]+)"?/);
+    const filename = match?.[1] ?? fallbackFilename;
+    const blobUrl = window.URL.createObjectURL(res.data);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(blobUrl);
+  } catch (e: any) {
+    // With responseType "blob", axios error bodies are also Blobs — parse
+    // out the backend's JSON {detail} so callers can show it in a toast.
+    if (e?.response?.data instanceof Blob) {
+      try {
+        const text = await e.response.data.text();
+        e.response.data = JSON.parse(text);
+      } catch {
+        // leave e.response.data as-is if it wasn't JSON
+      }
+    }
+    throw e;
+  }
+}
+
 export interface User {
   id: number;
   name: string;
@@ -209,8 +241,7 @@ export const dataApi = {
   locations: () =>
     api.get<{ locations: string[] }>('/api/data/locations').then((r) => r.data.locations),
   clear: () => api.delete('/api/data/records').then((r) => r.data),
-  exportUrl: (location?: string) =>
-    `${API_URL}/api/data/export${location ? `?location=${encodeURIComponent(location)}` : ''}`,
+  exportCsv: (location?: string) => downloadAuthed('/api/data/export', { location }, 'coconut_demand_export.csv'),
   templateUrl: () => `${API_URL}/api/data/template`,
 };
 
@@ -233,15 +264,18 @@ export const mlApi = {
     api
       .get<TestPredictionsResponse>('/api/ml/test-predictions', { params: { model, location } })
       .then((r) => r.data),
-  forecastExportUrl: (model: string, horizonDays: number, location?: string) =>
-    `${API_URL}/api/ml/forecast/export?model=${model}&horizon_days=${horizonDays}` +
-    (location ? `&location=${encodeURIComponent(location)}` : ''),
-  compareExportUrl: (location?: string) =>
-    `${API_URL}/api/ml/compare/export` + (location ? `?location=${encodeURIComponent(location)}` : ''),
-  forecastReportUrl: (model: string, horizonDays: number, location?: string, month?: string) =>
-    `${API_URL}/api/ml/forecast/report?model=${model}&horizon_days=${horizonDays}` +
-    (location ? `&location=${encodeURIComponent(location)}` : '') +
-    (month ? `&month=${encodeURIComponent(month)}` : ''),
+  downloadForecastExport: (model: string, horizonDays: number, location?: string) =>
+    downloadAuthed(
+      '/api/ml/forecast/export',
+      { model, horizon_days: horizonDays, location },
+      `forecast_${model}_${horizonDays}d.csv`
+    ),
+  downloadForecastReport: (model: string, horizonDays: number, location?: string, month?: string) =>
+    downloadAuthed(
+      '/api/ml/forecast/report',
+      { model, horizon_days: horizonDays, location, month },
+      `forecast_report_${model}.pdf`
+    ),
 };
 
 export const dashboardApi = {
