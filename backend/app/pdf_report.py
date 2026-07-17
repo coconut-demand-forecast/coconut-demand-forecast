@@ -1,8 +1,14 @@
 import datetime as dt
 import io
+import math
 from pathlib import Path
 from typing import Optional
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.font_manager as fm
+import matplotlib.pyplot as plt
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
@@ -10,6 +16,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
+    Image,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -17,12 +24,18 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from app.ml.forecast import Z_80
 from app.records import ALL_LOCATIONS
-from app.schemas import ForecastResponse
+from app.schemas import ForecastPoint, ForecastResponse
 
 FONT_PATH = Path(__file__).resolve().parent / "data" / "fonts" / "NotoSansThai.ttf"
 FONT_NAME = "NotoSansThai"
 _registered = False
+_mpl_font_registered = False
+
+# Derived from app.ml.forecast.Z_80 (the z-score used for lower/upper bounds)
+# rather than hardcoded, so the report's caption stays correct if that ever changes.
+CONFIDENCE_PCT = round(math.erf(Z_80 / math.sqrt(2)) * 100)
 
 MODEL_LABELS = {
     "random_forest": "Random Forest",
@@ -46,6 +59,56 @@ def _ensure_font_registered() -> None:
     if not _registered:
         pdfmetrics.registerFont(TTFont(FONT_NAME, str(FONT_PATH)))
         _registered = True
+
+
+def _ensure_mpl_font_registered() -> None:
+    global _mpl_font_registered
+    if not _mpl_font_registered:
+        fm.fontManager.addfont(str(FONT_PATH))
+        family = fm.FontProperties(fname=str(FONT_PATH)).get_name()
+        plt.rcParams["font.family"] = family
+        plt.rcParams["axes.unicode_minus"] = False
+        _mpl_font_registered = True
+
+
+def _build_forecast_chart_image(points: list[ForecastPoint]) -> io.BytesIO:
+    """A single line-plus-band chart of the forecast — one glance shows the
+    trend and shape that the data table takes much longer to read."""
+    _ensure_mpl_font_registered()
+
+    dates = [p.date for p in points]
+    predicted = [p.predicted for p in points]
+    lower = [p.lower for p in points]
+    upper = [p.upper for p in points]
+
+    fig, ax = plt.subplots(figsize=(6.8, 2.7), dpi=150)
+    fig.patch.set_facecolor("#ffffff")
+    ax.set_facecolor("#ffffff")
+
+    ax.fill_between(dates, lower, upper, color="#2fa76d", alpha=0.16, linewidth=0, zorder=1)
+    ax.plot(dates, predicted, color="#14664a", linewidth=2, zorder=2)
+
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color("#dbe7e0")
+    ax.tick_params(colors="#5a6a63", labelsize=8, length=0)
+    ax.grid(axis="y", color="#eef4f0", linewidth=0.8, zorder=0)
+    ax.set_axisbelow(True)
+
+    n = len(dates)
+    step = max(1, n // 8)
+    tick_idx = list(range(0, n, step))
+    ax.set_xticks([dates[i] for i in tick_idx])
+    ax.set_xticklabels([dates[i].strftime("%d/%m") for i in tick_idx])
+    ax.set_ylabel("ความต้องการ (ลูก)", fontsize=8.5, color="#5a6a63")
+
+    fig.tight_layout(pad=0.6)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf
 
 
 def _location_label(location: Optional[str]) -> str:
@@ -124,6 +187,15 @@ def build_forecast_report_pdf(
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
     ]))
     elements.append(param_table)
+
+    elements.append(Paragraph("กราฟแนวโน้มค่าพยากรณ์" + (f" — {period_label}" if month else ""), styles["h2"]))
+    chart_buf = _build_forecast_chart_image(points)
+    chart_width = 170 * mm
+    chart_height = chart_width * (2.7 / 6.8)
+    elements.append(Image(chart_buf, width=chart_width, height=chart_height))
+    elements.append(Paragraph(
+        f"เส้นทึบ = ค่าพยากรณ์ &nbsp;&nbsp;|&nbsp;&nbsp; แถบสีอ่อน = ช่วงคาดการณ์ {CONFIDENCE_PCT}%", styles["small"],
+    ))
 
     elements.append(Paragraph("ความแม่นยำของโมเดล (ประเมินจากข้อมูลย้อนหลัง)", styles["h2"]))
     accuracy_pct = max(0.0, min(100.0, 100 - resp.mape))

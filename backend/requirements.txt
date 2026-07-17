@@ -17,3 +17,4 @@ lightgbm==4.5.0
 pytest==8.3.4
 httpx==0.28.1
 reportlab==5.0.0
+matplotlib==3.11.0
