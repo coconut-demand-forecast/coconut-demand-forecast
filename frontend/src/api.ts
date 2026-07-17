@@ -211,6 +211,7 @@ export const dataApi = {
   clear: () => api.delete('/api/data/records').then((r) => r.data),
   exportUrl: (location?: string) =>
     `${API_URL}/api/data/export${location ? `?location=${encodeURIComponent(location)}` : ''}`,
+  templateUrl: () => `${API_URL}/api/data/template`,
 };
 
 export const mlApi = {
@@ -237,6 +238,10 @@ export const mlApi = {
     (location ? `&location=${encodeURIComponent(location)}` : ''),
   compareExportUrl: (location?: string) =>
     `${API_URL}/api/ml/compare/export` + (location ? `?location=${encodeURIComponent(location)}` : ''),
+  forecastReportUrl: (model: string, horizonDays: number, location?: string, month?: string) =>
+    `${API_URL}/api/ml/forecast/report?model=${model}&horizon_days=${horizonDays}` +
+    (location ? `&location=${encodeURIComponent(location)}` : '') +
+    (month ? `&month=${encodeURIComponent(month)}` : ''),
 };
 
 export const dashboardApi = {

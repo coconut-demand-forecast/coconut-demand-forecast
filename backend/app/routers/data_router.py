@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 import pandas as pd
 
 from app.auth import get_current_user
-from app.data_parsing import FileValidationError, parse_upload
+from app.data_parsing import COLUMN_MAP, FileValidationError, parse_upload
 from app.database import get_db
 from app.ml.cache import clear_user
 from app.ml.pipeline import MIN_RAW_ROWS, MIN_USABLE_ROWS, WARMUP_DAYS, build_features
@@ -213,6 +213,83 @@ def clear_records(
     db.commit()
     clear_user(current_user.id)
     return {"deleted": deleted}
+
+
+@router.get("/template")
+def download_template():
+    """Blank upload template: same columns as a real import, a couple of
+    clearly-marked example rows showing the expected format for tricky
+    fields (0/1 flags, season names, ...), and a short instructions sheet —
+    for a first-time user who has never seen the column layout before."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ข้อมูล"
+
+    headers = list(COLUMN_MAP.keys())
+    ws.append(headers)
+    header_fill = PatternFill(start_color="14664A", end_color="14664A", fill_type="solid")
+    for col_idx, _ in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    example_rows = [
+        [
+            "2026-01-01", 2000, 25, 20, 1800, "ฤดูหนาว", 0, 26, 5, 15000, "ค้าปลีก", "สมุทรสาคร", 0,
+            "◄ แถวตัวอย่าง ลบก่อนนำเข้าข้อมูลจริง",
+        ],
+        [
+            "2026-01-02", 2150, 25.5, 20, 1850, "ฤดูหนาว", 0, 26, 0, 15200, "ค้าส่ง", "สมุทรสาคร", 1,
+            "◄ แถวตัวอย่าง ลบก่อนนำเข้าข้อมูลจริง",
+        ],
+    ]
+    example_fill = PatternFill(start_color="FDF3E6", end_color="FDF3E6", fill_type="solid")
+    for row in example_rows:
+        ws.append(row)
+        for col_idx in range(1, len(headers) + 1):
+            ws.cell(row=ws.max_row, column=col_idx).fill = example_fill
+
+    widths = [12, 20, 16, 20, 18, 12, 16, 14, 14, 16, 14, 12, 14, 28]
+    for col_idx, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = w
+    ws.freeze_panes = "A2"
+
+    info = wb.create_sheet("คำแนะนำ")
+    info_lines = [
+        ("คำแนะนำการกรอกข้อมูล", True),
+        ("", False),
+        ("วันที่: รูปแบบ ปปปป-ดด-วว โดยใช้ปีคริสต์ศักราช (ค.ศ.) เช่น 2026-01-01 ไม่ใช่ปีพุทธศักราช (พ.ศ.) จำเป็นต้องกรอก", False),
+        ("ความต้องการ/ยอดขาย (ลูก): ตัวเลข จำนวนลูกมะพร้าวที่ขายได้ในวันนั้น จำเป็นต้องกรอก", False),
+        ("ราคาขายเฉลี่ย, ราคาหน้าสวน/ต้นทุน: ตัวเลข หน่วยบาทต่อลูก ไม่บังคับ", False),
+        ("ปริมาณผลผลิต/สต๊อก: ตัวเลข จำนวนลูก ไม่บังคับ", False),
+        ("ฤดูกาล: ระบุเป็นข้อความ เช่น ฤดูร้อน / ฤดูฝน / ฤดูหนาว ไม่บังคับ", False),
+        ("วันหยุด/เทศกาล และ มีโปรโมชั่น: กรอก 0 (ไม่ใช่) หรือ 1 (ใช่) เท่านั้น ไม่บังคับ", False),
+        ("อุณหภูมิเฉลี่ย, ปริมาณน้ำฝน, จำนวนนักท่องเที่ยว: ตัวเลข ไม่บังคับ", False),
+        ("ช่องทางจำหน่าย: ระบุเป็นข้อความ เช่น ค้าส่ง / ค้าปลีก / ออนไลน์ ไม่บังคับ", False),
+        ("จังหวัด: กรอกถ้าต้องการแยกพยากรณ์ตามพื้นที่ปลูก ปล่อยว่างได้ถ้ามีข้อมูลที่เดียว", False),
+        ("หมายเหตุ: ข้อความอิสระ ไม่บังคับ", False),
+        ("", False),
+        ("ลบแถวตัวอย่าง (พื้นหลังสีส้มอ่อน) ในชีต \"ข้อมูล\" ก่อนกรอกข้อมูลจริงของคุณ แล้วนำไฟล์นี้ไปอัปโหลดที่หน้า \"ข้อมูล\" ในระบบ", False),
+    ]
+    for i, (text, bold) in enumerate(info_lines, start=1):
+        cell = info.cell(row=i, column=1, value=text)
+        if bold:
+            cell.font = Font(bold=True, size=13, color="14664A")
+    info.column_dimensions["A"].width = 90
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=coconut_demand_template.xlsx"},
+    )
 
 
 @router.get("/export")

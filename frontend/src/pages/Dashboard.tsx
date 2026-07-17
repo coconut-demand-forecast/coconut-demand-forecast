@@ -457,23 +457,59 @@ export default function Dashboard() {
             </div>
             {monthError && <div style={{ fontSize: 12.5, color: 'var(--c-danger)' }}>{monthError}</div>}
             {monthResult && (
-              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', marginBottom: 2 }}>{t('monthlyTotal')}</div>
-                  <div className="font-heading" style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-primary-dark)' }}>
-                    {Math.round(monthResult.total).toLocaleString()} {t('unitUnits')}
+              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', marginBottom: 2 }}>{t('monthlyTotal')}</div>
+                    <div className="font-heading" style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-primary-dark)' }}>
+                      {Math.round(monthResult.total).toLocaleString()} {t('unitUnits')}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', marginBottom: 2 }}>{t('monthlyAvgDay')}</div>
+                    <div className="font-heading" style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-text-soft)' }}>
+                      {Math.round(monthResult.avgDay).toLocaleString()} {t('unitUnits')}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', marginBottom: 2 }}>{t('monthlyAvgDay')}</div>
-                  <div className="font-heading" style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-text-soft)' }}>
-                    {Math.round(monthResult.avgDay).toLocaleString()} {t('unitUnits')}
-                  </div>
-                </div>
+                <a
+                  href={mlApi.forecastReportUrl(summary.best_model, chartHorizon, location, selectedMonth)}
+                  style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-primary)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                >
+                  {t('exportPdfMonthBtn')}
+                </a>
               </div>
             )}
           </>
         )}
+      </div>
+
+      <div className="card">
+        <div className="font-heading" style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>{t('exportTitle')}</div>
+        <div style={{ fontSize: 12, color: 'var(--c-text-faint)', marginBottom: 16 }}>{t('exportReportSub')}</div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <a
+            href={dataApi.exportUrl(location)}
+            target="_blank"
+            rel="noreferrer"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--c-border)', cursor: 'pointer', background: '#fff', color: 'var(--c-primary-dark)', fontWeight: 600, fontSize: 13, padding: '10px 18px', borderRadius: 10, textDecoration: 'none' }}
+          >
+            {t('exportCsv')}
+          </a>
+          {summary.best_model ? (
+            <a
+              href={mlApi.forecastReportUrl(summary.best_model, chartHorizon, location)}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-primary"
+              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '10px 18px', textDecoration: 'none' }}
+            >
+              {t('exportPdfBtn')}
+            </a>
+          ) : (
+            <span style={{ fontSize: 12, color: 'var(--c-text-faint)', alignSelf: 'center' }}>{t('exportNoModel')}</span>
+          )}
+        </div>
       </div>
     </AppLayout>
   );

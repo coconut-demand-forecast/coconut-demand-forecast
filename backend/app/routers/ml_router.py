@@ -14,6 +14,7 @@ from app.ml.cache import get_trained, set_trained
 from app.ml.forecast import ASSUMPTIONS_TEXT, generate_forecast
 from app.ml.pipeline import rank_key, train_and_evaluate
 from app.models import TrainingRun, User
+from app.pdf_report import build_forecast_report_pdf
 from app.records import load_records_df
 from app.schemas import (
     ForecastPoint,
@@ -270,6 +271,40 @@ def export_forecast(
         iter([buf.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=forecast_{model}_{horizon_days}d.csv"},
+    )
+
+
+@router.get("/forecast/report")
+def forecast_report(
+    model: str = Query(default="xgboost"),
+    horizon_days: int = Query(default=30, ge=1, le=365),
+    location: Optional[str] = Query(default=None),
+    month: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """A printable PDF summary of one forecast run: parameters used
+    (location/model/horizon or a specific month), accuracy on historical
+    data, and the forecasted values themselves."""
+    if month:
+        # Forecasts start the day after the last date in the data, not
+        # "today" — make sure the horizon actually reaches the requested
+        # month regardless of what the caller passed.
+        df = load_records_df(db, current_user.id, location=location)
+        if not df.empty:
+            last_date = max(df["date"])
+            year, mo = (int(x) for x in month.split("-"))
+            month_end = dt.date(year, mo + 1, 1) - dt.timedelta(days=1) if mo < 12 else dt.date(year, 12, 31)
+            needed = (month_end - last_date).days
+            horizon_days = max(horizon_days, min(365, max(1, needed)))
+
+    resp = forecast(model=model, horizon_days=horizon_days, location=location, db=db, current_user=current_user)
+    pdf_bytes = build_forecast_report_pdf(resp, location=location, month=month)
+    filename = f"forecast_report_{model}_{month or f'{horizon_days}d'}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

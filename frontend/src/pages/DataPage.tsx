@@ -14,6 +14,7 @@ export default function DataPage() {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [pendingReport, setPendingReport] = useState<UploadResult | null>(null);
+  const [openHint, setOpenHint] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -111,19 +112,23 @@ export default function DataPage() {
 
   const qualityRows = quality
     ? [
-        { label: t('qualityCount'), value: `${quality.count.toLocaleString()} ${t('unitRecords')}`, warn: false },
+        { key: 'count', label: t('qualityCount'), value: `${quality.count.toLocaleString()} ${t('unitRecords')}`, warn: false, hint: t('qualityHintCount') },
         {
+          key: 'dateRange',
           label: t('qualityDateRange'),
           value: quality.date_from && quality.date_to ? `${quality.date_from} - ${quality.date_to}` : '-',
           warn: false,
+          hint: t('qualityHintDateRange'),
         },
-        { label: t('qualityMissing'), value: `${quality.missing_value_rows.toLocaleString()}`, warn: quality.missing_value_rows > 0 },
-        { label: t('qualityDuplicate'), value: `${quality.duplicate_date_rows.toLocaleString()}`, warn: quality.duplicate_date_rows > 0 },
-        { label: t('qualityOutlier'), value: `${quality.outlier_rows.toLocaleString()}`, warn: quality.outlier_rows > 0 },
+        { key: 'missing', label: t('qualityMissing'), value: `${quality.missing_value_rows.toLocaleString()}`, warn: quality.missing_value_rows > 0, hint: t('qualityHintMissing') },
+        { key: 'duplicate', label: t('qualityDuplicate'), value: `${quality.duplicate_date_rows.toLocaleString()}`, warn: quality.duplicate_date_rows > 0, hint: t('qualityHintDuplicate') },
+        { key: 'outlier', label: t('qualityOutlier'), value: `${quality.outlier_rows.toLocaleString()}`, warn: quality.outlier_rows > 0, hint: t('qualityHintOutlier') },
         {
+          key: 'usable',
           label: t('qualityUsable'),
           value: `${quality.usable_rows_for_training.toLocaleString()} / ${lang === 'th' ? 'ต้องการอย่างน้อย' : 'need'} ${quality.min_raw_rows_required}`,
           warn: !quality.ready_for_training,
+          hint: t('qualityHintUsable'),
         },
       ]
     : [];
@@ -179,6 +184,7 @@ export default function DataPage() {
                 {t('loadSample')}
               </button>
             </div>
+            <div style={{ fontSize: 11, color: 'var(--c-warn)', lineHeight: 1.6, marginTop: 10 }}>{t('sampleDataWarning')}</div>
           </div>
           {busy && busyLabel && (
             <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--c-text-muted)' }}>
@@ -186,6 +192,15 @@ export default function DataPage() {
               {busyLabel}
             </div>
           )}
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--c-border-light)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 11.5, color: 'var(--c-text-faint)', maxWidth: 320 }}>{t('templateHint')}</div>
+            <a
+              href={dataApi.templateUrl()}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 600, color: 'var(--c-primary-dark)', textDecoration: 'none', border: '1px solid var(--c-border)', padding: '9px 15px', borderRadius: 9, whiteSpace: 'nowrap' }}
+            >
+              {t('templateBtn')}
+            </a>
+          </div>
         </div>
 
         <div className="card" style={{ padding: 22 }}>
@@ -208,14 +223,44 @@ export default function DataPage() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {qualityRows.map((c) => (
-              <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 13px', borderRadius: 11, background: c.warn ? '#fdf3e6' : '#f2f8f5' }}>
-                <span style={{ width: 22, height: 22, flex: 'none', borderRadius: 7, background: c.warn ? '#f9e3c3' : '#dcefe4', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
-                  {c.warn ? '!' : '✓'}
-                </span>
-                <span style={{ flex: 1 }}>
-                  <span style={{ display: 'block', fontSize: 12, color: 'var(--c-text-muted)' }}>{c.label}</span>
-                  <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--c-text-soft)' }}>{c.value}</span>
-                </span>
+              <div key={c.key} style={{ borderRadius: 11, background: c.warn ? '#fdf3e6' : '#f2f8f5' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 13px' }}>
+                  <span style={{ width: 22, height: 22, flex: 'none', borderRadius: 7, background: c.warn ? '#f9e3c3' : '#dcefe4', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                    {c.warn ? '!' : '✓'}
+                  </span>
+                  <span style={{ flex: 1 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--c-text-muted)' }}>
+                      {c.label}
+                      <button
+                        onClick={() => setOpenHint((k) => (k === c.key ? null : c.key))}
+                        aria-label="info"
+                        style={{
+                          width: 14,
+                          height: 14,
+                          flex: 'none',
+                          borderRadius: '50%',
+                          border: '1px solid var(--c-border)',
+                          background: openHint === c.key ? 'var(--c-primary)' : '#fff',
+                          color: openHint === c.key ? '#fff' : 'var(--c-text-faint)',
+                          fontSize: 9,
+                          lineHeight: 1,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          padding: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        ?
+                      </button>
+                    </span>
+                    <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--c-text-soft)' }}>{c.value}</span>
+                  </span>
+                </div>
+                {openHint === c.key && (
+                  <div style={{ padding: '0 13px 12px 46px', fontSize: 11.5, color: 'var(--c-text-muted)', lineHeight: 1.6 }}>{c.hint}</div>
+                )}
               </div>
             ))}
             {quality?.reason && (
@@ -262,27 +307,20 @@ export default function DataPage() {
         </div>
       </div>
 
-      <div style={{ background: 'linear-gradient(140deg,#1f8a5b,#14664a)', color: '#eaf5ef', borderRadius: 15, padding: '22px 24px' }}>
-        <div className="font-heading" style={{ fontWeight: 600, fontSize: 16, color: '#fff', marginBottom: 5 }}>{t('exportTitle')}</div>
-        <div style={{ fontSize: 12.5, color: '#c9e6d8', marginBottom: 18, lineHeight: 1.6 }}>{t('exportSub')}</div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <a
-            href={dataApi.exportUrl()}
-            target="_blank"
-            rel="noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, border: 'none', cursor: 'pointer', background: '#fff', color: 'var(--c-primary-dark)', fontWeight: 600, fontSize: 13.5, padding: '11px 18px', borderRadius: 10, textDecoration: 'none' }}
-          >
-            {t('exportCsv')}
-          </a>
-          <button
-            onClick={handleClear}
-            disabled={busy || !quality?.count}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid rgba(255,255,255,.4)', cursor: 'pointer', background: 'rgba(255,255,255,.1)', color: '#fff', fontWeight: 600, fontSize: 13.5, padding: '11px 18px', borderRadius: 10 }}
-          >
-            {busy && <Spinner size={13} color="#fff" />}
-            {t('clearData')}
-          </button>
+      <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12, color: 'var(--c-text-faint)' }}>
+          {lang === 'th'
+            ? 'ต้องการส่งออกข้อมูลหรือรายงานพยากรณ์? ไปที่หน้า "แดชบอร์ด"'
+            : 'Looking to export data or a forecast report? Head to the "Dashboard" page.'}
         </div>
+        <button
+          onClick={handleClear}
+          disabled={busy || !quality?.count}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--c-danger)', cursor: 'pointer', background: '#fff', color: 'var(--c-danger)', fontWeight: 600, fontSize: 13, padding: '9px 16px', borderRadius: 9 }}
+        >
+          {busy && <Spinner size={13} color="var(--c-danger)" />}
+          {t('clearData')}
+        </button>
       </div>
 
       {pendingFile && pendingReport && (
