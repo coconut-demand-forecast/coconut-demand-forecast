@@ -229,6 +229,12 @@ export default function Dashboard() {
           value={summary.total_records.toLocaleString()}
           unit={t('unitRecords')}
           label={t('kpiTotalRecords')}
+          hint={{
+            sourceLabel: t('kpiHintSourceLabel'),
+            source: t('kpiTotalRecordsSource'),
+            usageLabel: t('kpiHintUsageLabel'),
+            usage: t('kpiTotalRecordsUsage'),
+          }}
         />
         <KpiCard
           icon={<span style={{ fontSize: 16 }}>📈</span>}
@@ -236,6 +242,12 @@ export default function Dashboard() {
           value={summary.avg_demand_30d?.toLocaleString() ?? '-'}
           unit={t('unitUnits')}
           label={t('kpiAvgDemand')}
+          hint={{
+            sourceLabel: t('kpiHintSourceLabel'),
+            source: t('kpiAvgDemandSource'),
+            usageLabel: t('kpiHintUsageLabel'),
+            usage: t('kpiAvgDemandUsage'),
+          }}
         />
         <KpiCard
           icon={<span style={{ fontSize: 16 }}>💰</span>}
@@ -243,6 +255,12 @@ export default function Dashboard() {
           value={summary.avg_price_30d?.toLocaleString() ?? '-'}
           unit={t('unitBaht')}
           label={t('kpiAvgPrice')}
+          hint={{
+            sourceLabel: t('kpiHintSourceLabel'),
+            source: t('kpiAvgPriceSource'),
+            usageLabel: t('kpiHintUsageLabel'),
+            usage: t('kpiAvgPriceUsage'),
+          }}
         />
         <KpiCard
           icon={<span style={{ fontSize: 16 }}>{(summary.growth_pct ?? 0) >= 0 ? '⬆️' : '⬇️'}</span>}
@@ -250,6 +268,12 @@ export default function Dashboard() {
           value={summary.growth_pct !== null ? `${summary.growth_pct > 0 ? '+' : ''}${summary.growth_pct}` : '-'}
           unit="%"
           label={t('kpiGrowth')}
+          hint={{
+            sourceLabel: t('kpiHintSourceLabel'),
+            source: t('kpiGrowthSource'),
+            usageLabel: t('kpiHintUsageLabel'),
+            usage: t('kpiGrowthUsage'),
+          }}
         />
       </div>
 
